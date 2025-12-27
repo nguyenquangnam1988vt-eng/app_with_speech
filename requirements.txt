@@ -1,6 +1,6 @@
 # Core requirements (BẮT BUỘC)
 streamlit==1.28.0
-pandas==2.0.0
+pandas==2.2.0
 werkzeug==3.0.0
 
 # Optional - Cho SendGrid email (NẾU CÓ)
