@@ -1,24 +1,17 @@
 # Core dependencies
 streamlit==1.28.0
 pandas==2.1.0
-sqlalchemy==2.0.0
+sqlite3
 python-dotenv==1.0.0
-
-# Email functionality
-secure-smtplib==0.1.1
-email-validator==2.0.0
-
-# Authentication & security
 bcrypt==4.0.1
-cryptography==41.0.7
 
-# Voice-to-text (OPTIONAL - chỉ cài nếu cần)
+# SendGrid for email
+sendgrid==6.11.0
+
+# For speech-to-text (OPTIONAL - only if you need voice input)
 SpeechRecognition==3.10.0
 pyaudio==0.2.11
 pydub==0.25.1
 
 # File handling
 Pillow==10.0.1
-
-# Utilities
-python-multipart==0.0.6
