@@ -1,95 +1,94 @@
 """
-HỆ THỐNG TIẾP NHẬN PHẢN ÁNH & TƯ VẤN CỘNG ĐỒNG
-TÍCH HỢP ĐẦY ĐỦ: Voice-to-Text, Database, Email, Authentication
+🏛️ HỆ THỐNG TIẾP NHẬN PHẢN ÁNH & TƯ VẤN CỘNG ĐỒNG
+Tích hợp đầy đủ: SendGrid Email, Database, Diễn đàn, Voice-to-Text
 """
+
 import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import datetime
 import hashlib
 import secrets
-import os
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from dotenv import load_dotenv
 import time
-import bcrypt
 import json
+import os
 
-# ================ VOICE-TO-TEXT INTEGRATION ================
-VOICE_ENABLED = False
+# Import SendGrid email service
 try:
-    import speech_recognition as sr
-    import pyaudio
-    VOICE_ENABLED = True
+    from email_service import send_email_report
+    SENDGRID_AVAILABLE = True
 except ImportError:
-    st.sidebar.warning("⚠️ Cài `pip install SpeechRecognition pyaudio` để dùng tính năng nói")
+    SENDGRID_AVAILABLE = False
+    st.sidebar.warning("⚠️ Chưa có file email_service.py")
 
-# ================ CONFIGURATION ================
-load_dotenv()
-
+# ================ CẤU HÌNH TRANG ================
 st.set_page_config(
-    page_title="Cổng Tiếp Nhận Cộng Đồng",
+    page_title="Cổng Tiếp Nhận Phản Ánh Cộng Đồng",
     page_icon="🏛️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ================ CSS ================
+# ================ CSS STYLING ================
 st.markdown("""
 <style>
     .main-header {
         text-align: center;
-        color: #1E3A8A;
-        padding: 1rem;
-        background: linear-gradient(135deg, #1E3A8A 0%, #3B82F6 100%);
         color: white;
+        padding: 1.5rem;
+        background: linear-gradient(135deg, #1E3A8A 0%, #3B82F6 100%);
         border-radius: 10px;
         margin-bottom: 2rem;
     }
-    .voice-panel {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
+    .report-card {
+        background: white;
         padding: 1.5rem;
-        border-radius: 15px;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         margin-bottom: 1rem;
+        border-left: 5px solid #dc3545;
     }
-    .mic-btn {
-        background: #4CAF50;
+    .forum-card {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        margin-bottom: 1rem;
+        border-left: 5px solid #28a745;
+    }
+    .police-badge {
+        background: #dc3545;
         color: white;
-        border: none;
-        padding: 12px 25px;
-        border-radius: 50px;
-        font-size: 16px;
-        cursor: pointer;
-        transition: 0.3s;
+        padding: 0.3rem 1rem;
+        border-radius: 20px;
+        font-size: 0.9rem;
+        font-weight: bold;
         display: inline-block;
-        margin: 5px;
     }
-    .mic-btn:hover { background: #45a049; transform: scale(1.05); }
-    .mic-btn-recording { 
-        background: #f44336 !important; 
-        animation: pulse 1.5s infinite;
+    .success-box {
+        background: #d4edda;
+        color: #155724;
+        padding: 1rem;
+        border-radius: 5px;
+        border-left: 5px solid #28a745;
     }
-    @keyframes pulse {
-        0% { transform: scale(1); }
-        50% { transform: scale(1.1); }
-        100% { transform: scale(1); }
+    .warning-box {
+        background: #fff3cd;
+        color: #856404;
+        padding: 1rem;
+        border-radius: 5px;
+        border-left: 5px solid #ffc107;
     }
-    .forum-question { border-left: 5px solid #28a745; padding: 1rem; margin: 1rem 0; background: #f8f9fa; }
-    .forum-answer { border-left: 5px solid #007bff; padding: 1rem; margin: 1rem 0; background: #e8f4fd; }
-    .police-badge { background: #dc3545; color: white; padding: 0.2rem 0.8rem; border-radius: 15px; font-size: 0.8rem; }
 </style>
 """, unsafe_allow_html=True)
 
-# ================ DATABASE FUNCTIONS ================
-def init_db():
-    """Khởi tạo database"""
+# ================ KHỞI TẠO DATABASE ================
+def init_database():
+    """Khởi tạo tất cả bảng database"""
     conn = sqlite3.connect('community_app.db')
     c = conn.cursor()
     
-    # Security reports
+    # Bảng phản ánh an ninh
     c.execute('''
         CREATE TABLE IF NOT EXISTS security_reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,13 +102,13 @@ def init_db():
         )
     ''')
     
-    # Forum posts
+    # Bảng diễn đàn
     c.execute('''
         CREATE TABLE IF NOT EXISTS forum_posts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             content TEXT NOT NULL,
-            category TEXT,
+            category TEXT DEFAULT 'Hỏi đáp pháp luật',
             anonymous_id TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             reply_count INTEGER DEFAULT 0,
@@ -117,21 +116,22 @@ def init_db():
         )
     ''')
     
-    # Forum replies
+    # Bảng bình luận
     c.execute('''
         CREATE TABLE IF NOT EXISTS forum_replies (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             post_id INTEGER,
             content TEXT NOT NULL,
-            author_type TEXT,
+            author_type TEXT DEFAULT 'anonymous',
             author_id TEXT,
             display_name TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            is_official BOOLEAN DEFAULT 0
+            is_official BOOLEAN DEFAULT 0,
+            FOREIGN KEY (post_id) REFERENCES forum_posts(id)
         )
     ''')
     
-    # Police users
+    # Bảng công an
     c.execute('''
         CREATE TABLE IF NOT EXISTS police_users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,164 +142,26 @@ def init_db():
         )
     ''')
     
-    # Tạo admin mặc định
+    # Tạo admin mặc định nếu chưa có
     c.execute("SELECT COUNT(*) FROM police_users WHERE badge_number = 'CA001'")
     if c.fetchone()[0] == 0:
+        import bcrypt
         hashed_pw = bcrypt.hashpw("congan123".encode(), bcrypt.gensalt()).decode()
-        c.execute('INSERT INTO police_users (badge_number, display_name, password_hash, role) VALUES (?, ?, ?, ?)',
-                 ('CA001', 'Admin Công An', hashed_pw, 'admin'))
+        c.execute('''
+            INSERT INTO police_users (badge_number, display_name, password_hash, role)
+            VALUES (?, ?, ?, ?)
+        ''', ('CA001', 'Admin Công An', hashed_pw, 'admin'))
     
     conn.commit()
     conn.close()
 
-# ================ VOICE-TO-TEXT FUNCTIONS ================
-class VoiceRecorder:
-    """Class xử lý ghi âm và chuyển giọng nói thành văn bản"""
-    
-    def __init__(self):
-        self.recognizer = sr.Recognizer() if VOICE_ENABLED else None
-        self.is_recording = False
-        self.last_result = ""
-        
-    def start_recording(self, duration=10):
-        """Bắt đầu ghi âm"""
-        if not VOICE_ENABLED:
-            return False, "Chưa cài thư viện giọng nói"
-        
-        try:
-            with sr.Microphone() as source:
-                self.recognizer.adjust_for_ambient_noise(source, duration=1)
-                audio = self.recognizer.listen(source, timeout=duration)
-                
-                # Chuyển thành văn bản
-                text = self.recognizer.recognize_google(audio, language='vi-VN')
-                self.last_result = text
-                return True, text
-                
-        except sr.WaitTimeoutError:
-            return False, "Không có âm thanh"
-        except sr.UnknownValueError:
-            return False, "Không nhận diện được giọng nói"
-        except Exception as e:
-            return False, f"Lỗi: {str(e)}"
-    
-    def quick_record(self):
-        """Ghi âm nhanh 5 giây"""
-        return self.start_recording(5)
-
-def show_voice_input(key_name, default_text=""):
-    """Hiển thị giao diện nhập bằng giọng nói"""
-    
-    if not VOICE_ENABLED:
-        st.warning("⚠️ Cài `pip install SpeechRecognition pyaudio` để dùng tính năng nói")
-        return default_text
-    
-    # Khởi tạo recorder trong session state
-    if 'voice_recorder' not in st.session_state:
-        st.session_state.voice_recorder = VoiceRecorder()
-    
-    recorder = st.session_state.voice_recorder
-    
-    # Panel giọng nói
-    st.markdown('<div class="voice-panel">', unsafe_allow_html=True)
-    st.markdown("### 🎤 NHẬP BẰNG GIỌNG NÓI")
-    st.markdown("Nhấn nút rồi nói vào micro")
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Nút điều khiển
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("🎤 Nói 5 giây", use_container_width=True, key=f"voice_5s_{key_name}"):
-            with st.spinner("Đang nghe... Hãy nói"):
-                success, result = recorder.quick_record()
-                if success:
-                    st.session_state[key_name] = result
-                    st.success("✅ Đã nhận diện!")
-                else:
-                    st.error(f"Lỗi: {result}")
-    
-    with col2:
-        if st.button("🎤 Nói 10 giây", use_container_width=True, key=f"voice_10s_{key_name}"):
-            with st.spinner("Đang nghe 10 giây..."):
-                success, result = recorder.start_recording(10)
-                if success:
-                    st.session_state[key_name] = result
-                    st.success("✅ Đã nhận diện!")
-                else:
-                    st.error(f"Lỗi: {result}")
-    
-    with col3:
-        if st.button("🗑️ Xóa", use_container_width=True, key=f"clear_{key_name}"):
-            st.session_state[key_name] = ""
-            st.rerun()
-    
-    # Hiển thị kết quả
-    if recorder.last_result:
-        st.info(f"**Kết quả nhận diện:** {recorder.last_result}")
-    
-    # Text area để chỉnh sửa
-    text_content = st.text_area(
-        "Chỉnh sửa nội dung:",
-        value=st.session_state.get(key_name, default_text),
-        key=key_name,
-        height=150,
-        placeholder="Nội dung sẽ tự động điền từ giọng nói..."
-    )
-    
-    return text_content
-
-# ================ EMAIL FUNCTIONS ================
-def send_email_via_smtp(subject, body):
-    """Gửi email qua SMTP"""
-    try:
-        smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-        smtp_port = int(os.getenv("SMTP_PORT", 587))
-        email_address = os.getenv("EMAIL_ADDRESS")
-        email_password = os.getenv("EMAIL_PASSWORD")
-        to_email = os.getenv("TO_EMAIL", email_address)
-        
-        msg = MIMEMultipart()
-        msg['From'] = email_address
-        msg['To'] = to_email
-        msg['Subject'] = subject
-        
-        msg.attach(MIMEText(body, 'plain', 'utf-8'))
-        
-        with smtplib.SMTP(smtp_server, smtp_port) as server:
-            server.starttls()
-            server.login(email_address, email_password)
-            server.send_message(msg)
-        
-        return True, "Email đã gửi!"
-    except Exception as e:
-        return False, f"Lỗi gửi email: {str(e)}"
-
-# ================ AUTHENTICATION ================
-def police_login(badge_number, password):
-    """Đăng nhập công an"""
+# ================ HÀM XỬ LÝ PHẢN ÁNH ================
+def save_to_database(title, description, location="", incident_time=""):
+    """Lưu phản ánh vào database"""
     conn = sqlite3.connect('community_app.db')
     c = conn.cursor()
     
-    c.execute('SELECT badge_number, display_name, password_hash, role FROM police_users WHERE badge_number = ?', 
-             (badge_number,))
-    user = c.fetchone()
-    conn.close()
-    
-    if user and bcrypt.checkpw(password.encode(), user[2].encode()):
-        return {
-            'badge_number': user[0],
-            'display_name': user[1],
-            'role': user[3]
-        }
-    return None
-
-# ================ DATA OPERATIONS ================
-def save_security_report(title, description, location="", incident_time=""):
-    """Lưu phản ánh an ninh"""
-    conn = sqlite3.connect('community_app.db')
-    c = conn.cursor()
-    
+    # Tạo hash từ thời gian để tracking
     ip_hash = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
     
     c.execute('''
@@ -311,22 +173,43 @@ def save_security_report(title, description, location="", incident_time=""):
     report_id = c.lastrowid
     conn.close()
     
-    # Gửi email
-    email_body = f"""
-    PHẢN ÁNH AN NINH MỚI #{report_id}
-    
-    Tiêu đề: {title}
-    Nội dung: {description}
-    Địa điểm: {location}
-    Thời gian: {incident_time}
-    
-    Thời gian tiếp nhận: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
-    """
-    
-    success, message = send_email_via_smtp(f"🚨 PHẢN ÁNH: {title[:50]}", email_body)
-    
-    return report_id, success, message
+    return report_id
 
+def handle_security_report(title, description, location, incident_time):
+    """Xử lý phản ánh và gửi email - PHẦN QUAN TRỌNG ĐÃ SỬA"""
+    
+    # 1. Lưu vào database
+    report_id = save_to_database(title, description, location, incident_time)
+    
+    # 2. Chuẩn bị dữ liệu email
+    report_data = {
+        'title': title,
+        'description': description,
+        'location': location,
+        'incident_time': incident_time,
+        'report_id': report_id
+    }
+    
+    # 3. Gửi email qua SendGrid (nếu có)
+    if SENDGRID_AVAILABLE:
+        email_success, email_message = send_email_report(report_data)
+    else:
+        # Fallback nếu không có email service
+        email_success = False
+        email_message = "Tính năng email chưa được cấu hình"
+    
+    # 4. Cập nhật trạng thái email trong database
+    if email_success:
+        conn = sqlite3.connect('community_app.db')
+        c = conn.cursor()
+        c.execute('UPDATE security_reports SET email_sent = 1 WHERE id = ?', (report_id,))
+        conn.commit()
+        conn.close()
+    
+    # 5. Hiển thị kết quả cho người dùng
+    return report_id, email_success, email_message
+
+# ================ HÀM DIỄN ĐÀN ================
 def save_forum_post(title, content, category):
     """Lưu bài đăng diễn đàn"""
     conn = sqlite3.connect('community_app.db')
@@ -346,7 +229,7 @@ def save_forum_post(title, content, category):
     return post_id, anonymous_id
 
 def save_forum_reply(post_id, content, is_police=False, police_info=None):
-    """Lưu bình luận"""
+    """Lưu bình luận diễn đàn"""
     conn = sqlite3.connect('community_app.db')
     c = conn.cursor()
     
@@ -403,12 +286,35 @@ def get_forum_replies(post_id):
     conn.close()
     return df
 
-# ================ MAIN APP ================
+# ================ ĐĂNG NHẬP CÔNG AN ================
+def police_login(badge_number, password):
+    """Đăng nhập công an"""
+    try:
+        import bcrypt
+        conn = sqlite3.connect('community_app.db')
+        c = conn.cursor()
+        
+        c.execute('SELECT badge_number, display_name, password_hash, role FROM police_users WHERE badge_number = ?', 
+                 (badge_number,))
+        user = c.fetchone()
+        conn.close()
+        
+        if user and bcrypt.checkpw(password.encode(), user[2].encode()):
+            return {
+                'badge_number': user[0],
+                'display_name': user[1],
+                'role': user[3]
+            }
+        return None
+    except Exception:
+        return None
+
+# ================ GIAO DIỆN CHÍNH ================
 def main():
-    """Ứng dụng chính"""
+    """Hàm chính của ứng dụng"""
     
     # Khởi tạo database
-    init_db()
+    init_database()
     
     # Header
     st.markdown("""
@@ -441,12 +347,29 @@ def main():
         else:
             # Thông tin đã đăng nhập
             user = st.session_state.police_user
-            st.success(f"👮 {user['display_name']}")
+            st.markdown(f'<span class="police-badge">👮 {user["display_name"]}</span>', unsafe_allow_html=True)
             st.info(f"Số hiệu: {user['badge_number']}")
             
             if st.button("Đăng xuất", use_container_width=True):
                 st.session_state.police_user = None
                 st.rerun()
+        
+        # Thông tin hệ thống
+        st.markdown("---")
+        st.markdown("### 📊 Thống kê nhanh")
+        
+        conn = sqlite3.connect('community_app.db')
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            total_reports = pd.read_sql_query("SELECT COUNT(*) FROM security_reports", conn)
+            st.metric("Phản ánh", int(total_reports.iloc[0,0]))
+        with col2:
+            total_posts = pd.read_sql_query("SELECT COUNT(*) FROM forum_posts", conn)
+            st.metric("Câu hỏi", int(total_posts.iloc[0,0]))
+        
+        conn.close()
     
     # Main tabs
     tab1, tab2, tab3 = st.tabs(["📢 PHẢN ÁNH AN NINH", "💬 DIỄN ĐÀN", "ℹ️ HƯỚNG DẪN"])
@@ -454,59 +377,59 @@ def main():
     # ========= TAB 1: PHẢN ÁNH AN NINH =========
     with tab1:
         st.subheader("Biểu mẫu Phản ánh An ninh Trật tự")
-        st.info("Thông tin sẽ được gửi NGAY đến email Công an. Bảo mật 100%.")
         
-        with st.form("security_report"):
+        if not SENDGRID_AVAILABLE:
+            st.warning("""
+            ⚠️ **TÍNH NĂNG EMAIL CHƯA SẴN SÀNG**
+            
+            Phản ánh sẽ chỉ được lưu vào database.
+            Để gửi email tự động, cần cấu hình SendGrid.
+            """)
+        
+        with st.form("security_report_form"):
             col1, col2 = st.columns(2)
             
             with col1:
-                title = st.text_input("Tiêu đề *", placeholder="Ví dụ: Mất trộm xe máy...")
-                location = st.text_input("Địa điểm", placeholder="Số nhà, đường...")
+                title = st.text_input("Tiêu đề phản ánh *", 
+                                    placeholder="Ví dụ: Mất trộm xe máy tại...")
+                location = st.text_input("Địa điểm", 
+                                       placeholder="Số nhà, đường, phường/xã...")
             
             with col2:
-                incident_time = st.text_input("Thời gian", placeholder="VD: 20h tối qua")
+                incident_time = st.text_input("Thời gian xảy ra", 
+                                            placeholder="VD: Khoảng 20h tối qua")
             
-            # Chọn phương thức nhập nội dung
-            input_method = st.radio(
-                "Cách nhập mô tả:",
-                ["⌨️ Gõ phím", "🎤 Nói (chuyển thành chữ)"],
-                horizontal=True
-            )
-            
-            if input_method == "🎤 Nói (chuyển thành chữ)":
-                description = show_voice_input("security_desc", "")
-            else:
-                description = st.text_area(
-                    "Mô tả chi tiết *",
-                    height=150,
-                    placeholder="Mô tả sự việc, đối tượng, thiệt hại..."
-                )
+            description = st.text_area("Mô tả chi tiết *", 
+                                     height=150,
+                                     placeholder="Mô tả đầy đủ sự việc, đối tượng, phương tiện, thiệt hại...")
             
             submitted = st.form_submit_button("🚨 GỬI PHẢN ÁNH", type="primary", use_container_width=True)
             
             if submitted:
                 if not title or not description:
-                    st.error("Vui lòng điền tiêu đề và mô tả!")
+                    st.error("⚠️ Vui lòng điền tiêu đề và mô tả sự việc!")
                 else:
-                    report_id, email_success, email_msg = save_security_report(
+                    # Xử lý phản ánh - GỌI HÀM ĐÃ SỬA
+                    report_id, email_success, email_message = handle_security_report(
                         title, description, location, incident_time
                     )
                     
                     if email_success:
-                        st.success(f"""
-                        ✅ **ĐÃ TIẾP NHẬN PHẢN ÁNH #{report_id}**
-                        
-                        Phản ánh đã được gửi đến Công an qua email.
-                        Cảm ơn bạn đã đóng góp cho an ninh cộng đồng!
-                        """)
+                        st.markdown(f"""
+                        <div class="success-box">
+                            <h4>✅ ĐÃ TIẾP NHẬN PHẢN ÁNH #{report_id}</h4>
+                            <p>{email_message}</p>
+                            <p>Phản ánh đã được gửi đến Công an. Cảm ơn bạn đã đóng góp!</p>
+                        </div>
+                        """, unsafe_allow_html=True)
                     else:
-                        st.warning(f"""
-                        ⚠️ **ĐÃ LƯU NHƯNG LỖI EMAIL**
-                        
-                        Mã phản ánh: #{report_id}
-                        Lỗi: {email_msg}
-                        Vui lòng liên hệ trực tiếp 113 nếu cần thiết.
-                        """)
+                        st.markdown(f"""
+                        <div class="warning-box">
+                            <h4>⚠️ ĐÃ LƯU PHẢN ÁNH #{report_id}</h4>
+                            <p>{email_message}</p>
+                            <p>Vui lòng liên hệ trực tiếp qua số điện thoại nếu cần thiết.</p>
+                        </div>
+                        """, unsafe_allow_html=True)
     
     # ========= TAB 2: DIỄN ĐÀN =========
     with tab2:
@@ -521,17 +444,13 @@ def main():
         # Form đặt câu hỏi mới
         if st.session_state.get('show_new_question', False):
             with st.expander("✍️ ĐẶT CÂU HỎI MỚI", expanded=True):
-                with st.form("new_question"):
+                with st.form("new_question_form"):
                     q_title = st.text_input("Tiêu đề câu hỏi *")
-                    q_category = st.selectbox("Chủ đề", ["Pháp luật", "Mâu thuẫn", "Thủ tục", "Khác"])
-                    
-                    # Voice input cho câu hỏi
-                    use_voice = st.checkbox("Dùng giọng nói để đặt câu hỏi")
-                    
-                    if use_voice:
-                        q_content = show_voice_input("forum_question", "")
-                    else:
-                        q_content = st.text_area("Nội dung câu hỏi *", height=150)
+                    q_category = st.selectbox("Chủ đề", 
+                                            ["Hỏi đáp pháp luật", "Giải quyết mâu thuẫn", 
+                                             "Tư vấn thủ tục", "An ninh trật tự", "Khác"])
+                    q_content = st.text_area("Nội dung chi tiết *", height=150,
+                                           placeholder="Mô tả rõ vấn đề bạn đang gặp phải...")
                     
                     col1, col2 = st.columns(2)
                     with col1:
@@ -588,7 +507,8 @@ def main():
                     
                     # Form bình luận
                     with st.form(key=f"reply_form_{post['id']}"):
-                        reply_content = st.text_area("Bình luận của bạn", height=80)
+                        reply_content = st.text_area("Bình luận của bạn", height=80,
+                                                   placeholder="Viết câu trả lời hoặc ý kiến...")
                         
                         col1, col2 = st.columns(2)
                         with col1:
@@ -599,12 +519,6 @@ def main():
                             
                             submit_reply = st.form_submit_button(submit_label)
                         
-                        with col2:
-                            use_voice_reply = st.checkbox("Nói thay vì gõ", key=f"voice_reply_{post['id']}")
-                        
-                        if use_voice_reply:
-                            reply_content = show_voice_input(f"reply_voice_{post['id']}", reply_content)
-                        
                         if submit_reply and reply_content:
                             if st.session_state.police_user:
                                 author_id = save_forum_reply(
@@ -613,13 +527,13 @@ def main():
                                     is_police=True,
                                     police_info=st.session_state.police_user
                                 )
+                                st.success("✅ Đã gửi trả lời chính thức!")
                             else:
                                 author_id = save_forum_reply(post['id'], reply_content)
-                            
-                            st.success(f"✅ Đã gửi bình luận!")
+                                st.success("✅ Đã gửi bình luận!")
                             st.rerun()
         else:
-            st.info("Chưa có câu hỏi nào. Hãy là người đầu tiên!")
+            st.info("📝 Chưa có câu hỏi nào. Hãy là người đầu tiên đặt câu hỏi!")
     
     # ========= TAB 3: HƯỚNG DẪN =========
     with tab3:
@@ -631,8 +545,8 @@ def main():
             st.markdown("""
             ### 📢 **Phản ánh An ninh:**
             1. Điền thông tin sự việc
-            2. Có thể **NÓI** mô tả thay vì gõ
-            3. Nhấn GỬI → Email đến Công an ngay
+            2. Nhấn **GỬI PHẢN ÁNH**
+            3. Hệ thống tự động gửi đến Công an
             
             ### 💬 **Diễn đàn:**
             1. Đặt câu hỏi ẩn danh
@@ -642,47 +556,25 @@ def main():
         
         with col2:
             st.markdown("""
-            ### 🎤 **Nhập bằng giọng nói:**
-            - Nhấn nút 🎤
-            - Nói rõ vào micro
-            - Tự động thành chữ
-            - Chỉnh sửa nếu cần
-            
             ### 🔒 **Bảo mật:**
             - Không lưu thông tin cá nhân
             - ID ngẫu nhiên mỗi lần
             - Không cần đăng ký
+            
+            ### 👮 **Dành cho Công an:**
+            - Đăng nhập bằng số hiệu
+            - Trả lời câu hỏi chính thức
+            - Theo dõi phản ánh
             """)
         
-        # Thống kê
+        # Thông tin liên hệ
         st.markdown("---")
-        st.subheader("📊 Thống kê hệ thống")
-        
-        conn = sqlite3.connect('community_app.db')
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            total_reports = pd.read_sql_query("SELECT COUNT(*) FROM security_reports", conn)
-            st.metric("Phản ánh ANTT", int(total_reports.iloc[0,0]))
-        
-        with col2:
-            total_posts = pd.read_sql_query("SELECT COUNT(*) FROM forum_posts", conn)
-            st.metric("Câu hỏi", int(total_posts.iloc[0,0]))
-        
-        with col3:
-            total_replies = pd.read_sql_query("SELECT COUNT(*) FROM forum_replies", conn)
-            st.metric("Bình luận", int(total_replies.iloc[0,0]))
-        
-        with col4:
-            today = datetime.now().strftime('%Y-%m-%d')
-            today_reports = pd.read_sql_query(
-                "SELECT COUNT(*) FROM security_reports WHERE DATE(created_at) = ?", 
-                conn, params=(today,)
-            )
-            st.metric("Hôm nay", int(today_reports.iloc[0,0]))
-        
-        conn.close()
+        st.markdown("""
+        ### 📞 Liên hệ khẩn cấp
+        - **Hotline Công an:** 113
+        - **Trực ban địa phương:** Liên hệ Công an phường/xã
+        - **Tình huống nguy hiểm:** Gọi ngay 113
+        """)
 
 # Chạy ứng dụng
 if __name__ == "__main__":
