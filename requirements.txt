@@ -1,5 +1,20 @@
+# Core requirements (BẮT BUỘC)
 streamlit==1.28.0
-pandas==1.5.3
+pandas==2.0.0
+werkzeug==3.0.0
+
+# Optional - Cho SendGrid email (NẾU CÓ)
+sendgrid==6.10.0
 python-dotenv==1.0.0
-werkzeug==3.0.1
-sendgrid==6.11.0
+
+# Optional - Cho logging và xử lý nâng cao
+numpy==1.24.0
+python-dateutil==2.8.2
+pytz==2023.3
+
+# Optional - Visual hóa
+altair==5.1.2
+plotly==5.17.0
+
+# Optional - Định dạng file
+openpyxl==3.1.2  # Để đọc Excel nếu cần
