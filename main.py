@@ -250,14 +250,18 @@ def handle_security_report(title, description, location, incident_time):
 
 # ================ HÀM DIỄN ĐÀN ================
 def save_forum_post(title, content, category):
-    """Lưu bài đăng diễn đàn"""
+    """Lưu bài đăng diễn đàn - FIXED VERSION"""
+    conn = None
     try:
-        conn = sqlite3.connect(DB_PATH)
+        # Kết nối database với timeout
+        conn = sqlite3.connect(DB_PATH, timeout=10)
         c = conn.cursor()
         
-        anonymous_id = f"NgườiDân_{secrets.token_hex(4)}"
+        # Tạo ID đơn giản
+        import random
+        anonymous_id = f"User_{random.randint(1000, 9999)}"
         
-        # Thêm bài đăng mới
+        # INSERT đơn giản
         c.execute('''
             INSERT INTO forum_posts (title, content, category, anonymous_id)
             VALUES (?, ?, ?, ?)
@@ -265,12 +269,24 @@ def save_forum_post(title, content, category):
         
         conn.commit()
         post_id = c.lastrowid
-        conn.close()
         
         return post_id, anonymous_id, None
         
+    except sqlite3.Error as e:
+        st.error(f"Database error: {str(e)}")
+        return None, None, f"Lỗi database: {str(e)[:50]}"
+    
     except Exception as e:
-        return None, None, f"Lỗi: {str(e)}"
+        st.error(f"System error: {str(e)}")
+        return None, None, f"Lỗi hệ thống: {str(e)[:50]}"
+    
+    finally:
+        # LUÔN đóng connection
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 def save_forum_reply(post_id, content, is_police=False, police_info=None):
     """Lưu bình luận diễn đàn - CHỈ CÔNG AN ĐƯỢC PHÉP"""
