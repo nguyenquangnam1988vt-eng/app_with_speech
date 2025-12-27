@@ -1,6 +1,14 @@
+# Core dependencies - ỔN ĐỊNH NHẤT CHO STREAMLIT CLOUD
 streamlit==1.28.0
 pandas==1.5.3
 python-dotenv==1.0.0
-werkzeug==3.0.1  # THAY THẾ bcrypt
+werkzeug==3.0.1
+
+# SendGrid for email
 sendgrid==6.11.0
-Pillow==10.0.1
+
+# Pillow phiên bản THẤP HƠN (tương thích Python 3.13)
+Pillow==9.5.0  # THAY 10.0.1 BẰNG 9.5.0
+
+# Optional - chỉ thêm nếu thực sự cần
+# speech_recognition==3.10.0
