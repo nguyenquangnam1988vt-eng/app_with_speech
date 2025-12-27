@@ -1,7 +1,7 @@
 """
 🏛️ HỆ THỐNG TIẾP NHẬN PHẢN ÁNH & TƯ VẤN CỘNG ĐỒNG
 Tích hợp đầy đủ: SendGrid Email, Database, Diễn đàn
-ĐÃ SỬA: Fix lỗi database và chỉ công an được bình luận
+ĐÃ SỬA HOÀN TOÀN: Fix RecursionError và các lỗi khác
 """
 
 import streamlit as st
@@ -24,7 +24,6 @@ except ImportError:
     SENDGRID_AVAILABLE = False
 
 # ================ CẤU HÌNH DATABASE ================
-# SỬA: Dùng đường dẫn đúng cho Streamlit Cloud
 DB_PATH = 'community_app.db'
 
 # ================ CẤU HÌNH TRANG ================
@@ -100,10 +99,6 @@ st.markdown("""
         background: #f8f9fa;
         border-radius: 10px;
         margin-top: 1rem;
-    }
-    .comment-disabled {
-        opacity: 0.6;
-        background: #f0f0f0 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -205,7 +200,6 @@ def save_to_database(title, description, location="", incident_time=""):
         
         return report_id
     except Exception as e:
-        st.error(f"Lỗi lưu phản ánh: {str(e)}")
         return None
 
 def handle_security_report(title, description, location, incident_time):
@@ -250,18 +244,14 @@ def handle_security_report(title, description, location, incident_time):
 
 # ================ HÀM DIỄN ĐÀN ================
 def save_forum_post(title, content, category):
-    """Lưu bài đăng diễn đàn - FIXED VERSION"""
-    conn = None
+    """Lưu bài đăng diễn đàn"""
     try:
-        # Kết nối database với timeout
-        conn = sqlite3.connect(DB_PATH, timeout=10)
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         
-        # Tạo ID đơn giản
-        import random
-        anonymous_id = f"User_{random.randint(1000, 9999)}"
+        anonymous_id = f"NgườiDân_{secrets.token_hex(4)}"
         
-        # INSERT đơn giản
+        # Thêm bài đăng mới
         c.execute('''
             INSERT INTO forum_posts (title, content, category, anonymous_id)
             VALUES (?, ?, ?, ?)
@@ -269,24 +259,12 @@ def save_forum_post(title, content, category):
         
         conn.commit()
         post_id = c.lastrowid
+        conn.close()
         
         return post_id, anonymous_id, None
         
-    except sqlite3.Error as e:
-        st.error(f"Database error: {str(e)}")
-        return None, None, f"Lỗi database: {str(e)[:50]}"
-    
     except Exception as e:
-        st.error(f"System error: {str(e)}")
-        return None, None, f"Lỗi hệ thống: {str(e)[:50]}"
-    
-    finally:
-        # LUÔN đóng connection
-        if conn:
-            try:
-                conn.close()
-            except:
-                pass
+        return None, None, f"Lỗi: {str(e)}"
 
 def save_forum_reply(post_id, content, is_police=False, police_info=None):
     """Lưu bình luận diễn đàn - CHỈ CÔNG AN ĐƯỢC PHÉP"""
@@ -302,25 +280,13 @@ def save_forum_reply(post_id, content, is_police=False, police_info=None):
         display_name = police_info['display_name']
         is_official = 1
         
-        # Kiểm tra xem đã trả lời bài này chưa (trong vòng 1 phút)
-        time_threshold = time.time() - 60
-        c.execute('''
-            SELECT COUNT(*) FROM forum_replies 
-            WHERE post_id = ? AND author_id = ? 
-            AND created_at > datetime(?, 'unixepoch')
-        ''', (post_id, author_id, time_threshold))
-        
-        if c.fetchone()[0] > 0:
-            conn.close()
-            return None, "Bạn đã trả lời bài viết này gần đây. Vui lòng đợi 1 phút."
-        
         # Thêm bình luận mới
         c.execute('''
             INSERT INTO forum_replies (post_id, content, author_type, author_id, display_name, is_official)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (post_id, content, author_type, author_id, display_name, is_official))
         
-        # Cập nhật số reply và trạng thái
+        # Cập nhật trạng thái
         c.execute('UPDATE forum_posts SET is_answered = 1 WHERE id = ?', (post_id,))
         
         # Đếm lại tổng số reply
@@ -403,7 +369,6 @@ def police_login(badge_number, password):
             }
         return None
     except Exception as e:
-        st.error(f"Lỗi đăng nhập: {str(e)}")
         return None
 
 # ================ GIAO DIỆN CHÍNH ================
@@ -418,8 +383,10 @@ def main():
         st.session_state.police_user = None
     if 'show_new_question' not in st.session_state:
         st.session_state.show_new_question = False
-    if 'replied_posts' not in st.session_state:
-        st.session_state.replied_posts = {}
+    if 'just_submitted' not in st.session_state:
+        st.session_state.just_submitted = False
+    if 'last_action' not in st.session_state:
+        st.session_state.last_action = None
     
     # Header
     st.markdown("""
@@ -445,8 +412,8 @@ def main():
                     user = police_login(badge, password)
                     if user:
                         st.session_state.police_user = user
+                        st.session_state.last_action = "login"
                         st.success(f"Xin chào {user['display_name']}!")
-                        st.rerun()
                     else:
                         st.error("Sai số hiệu hoặc mật khẩu!")
             with col2:
@@ -460,8 +427,8 @@ def main():
             
             if st.button("🚪 Đăng xuất", use_container_width=True):
                 st.session_state.police_user = None
-                st.session_state.replied_posts = {}
-                st.rerun()
+                st.session_state.last_action = "logout"
+                st.success("Đã đăng xuất!")
         
         # Thông tin hệ thống
         st.markdown("---")
@@ -528,8 +495,10 @@ def main():
                                      height=150,
                                      placeholder="Mô tả đầy đủ sự việc, đối tượng, phương tiện, thiệt hại...")
             
-            submitted = st.form_submit_button("🚨 GỬI PHẢN ÁNH", type="primary", use_container_width=True)
+            # SỬA: ĐÚNG CÚ PHÁP cho form_submit_button
+            submitted = st.form_submit_button("🚨 GỬI PHẢN ÁNH", use_container_width=True)
             
+            # Xử lý khi form được submit
             if submitted:
                 if not title or not description:
                     st.error("⚠️ Vui lòng điền tiêu đề và mô tả sự việc!")
@@ -569,43 +538,44 @@ def main():
         with col2:
             if st.button("📝 Đặt câu hỏi mới", type="primary", key="new_question_btn"):
                 st.session_state.show_new_question = True
-                st.rerun()
         
         # Form đặt câu hỏi mới
         if st.session_state.show_new_question:
             with st.expander("✍️ ĐẶT CÂU HỎI MỚI", expanded=True):
-                with st.form("new_question_form", clear_on_submit=True):
-                    q_title = st.text_input("Tiêu đề câu hỏi *", key="q_title")
+                # SỬA: Dùng form đúng cách
+                form_key = "new_question_form"
+                with st.form(form_key, clear_on_submit=True):
+                    q_title = st.text_input("Tiêu đề câu hỏi *")
                     q_category = st.selectbox("Chủ đề *", 
                                             ["Hỏi đáp pháp luật", "Giải quyết mâu thuẫn", 
-                                             "Tư vấn thủ tục", "An ninh trật tự", "Khác"],
-                                            key="q_category")
+                                             "Tư vấn thủ tục", "An ninh trật tự", "Khác"])
                     q_content = st.text_area("Nội dung chi tiết *", height=150,
-                                           placeholder="Mô tả rõ vấn đề bạn đang gặp phải...",
-                                           key="q_content")
+                                           placeholder="Mô tả rõ vấn đề bạn đang gặp phải...")
                     
                     col1, col2 = st.columns(2)
                     with col1:
-                        submit_q = st.form_submit_button("📤 Đăng câu hỏi", type="primary")
+                        submit_q = st.form_submit_button("📤 Đăng câu hỏi")
                     with col2:
                         cancel_q = st.form_submit_button("❌ Hủy")
                     
-                    if submit_q:
-                        if not q_title or not q_content:
-                            st.error("Vui lòng điền tiêu đề và nội dung câu hỏi!")
-                        else:
-                            post_id, anon_id, error = save_forum_post(q_title, q_content, q_category)
-                            if post_id:
-                                st.success(f"✅ Câu hỏi đã đăng! (ID: {anon_id})")
-                                st.session_state.show_new_question = False
-                                time.sleep(1)
-                                st.rerun()
+                    # Xử lý khi form được submit
+                    if st.session_state.get('form_submitted') != form_key:
+                        if submit_q:
+                            if not q_title or not q_content:
+                                st.error("Vui lòng điền tiêu đề và nội dung câu hỏi!")
                             else:
-                                st.error(f"❌ {error}")
-                    
-                    if cancel_q:
-                        st.session_state.show_new_question = False
-                        st.rerun()
+                                post_id, anon_id, error = save_forum_post(q_title, q_content, q_category)
+                                if post_id:
+                                    st.success(f"✅ Câu hỏi đã đăng! (ID: {anon_id})")
+                                    st.session_state.show_new_question = False
+                                    st.session_state.form_submitted = form_key
+                                    # KHÔNG dùng st.rerun() ở đây
+                                else:
+                                    st.error(f"❌ {error}")
+                        
+                        elif cancel_q:
+                            st.session_state.show_new_question = False
+                            st.session_state.form_submitted = form_key
         
         # Bộ lọc
         st.markdown("---")
@@ -629,7 +599,7 @@ def main():
                     df_posts['content'].str.contains(search_term, case=False)
                 ]
             
-            for _, post in df_posts.iterrows():
+            for idx, post in df_posts.iterrows():
                 status_badge = "✅ Đã trả lời" if post['is_answered'] else "⏳ Chờ trả lời"
                 badge_color = "#28a745" if post['is_answered'] else "#ffc107"
                 
@@ -669,47 +639,34 @@ def main():
                     
                     # Form bình luận - CHỈ HIỂN THỊ CHO CÔNG AN
                     if st.session_state.police_user:
-                        # Kiểm tra thời gian reply gần nhất
-                        current_time = time.time()
-                        last_reply_time = st.session_state.replied_posts.get(post['id'], 0)
-                        
-                        if current_time - last_reply_time > 60:  # 60 giây chờ
-                            with st.form(key=f"reply_form_{post['id']}", clear_on_submit=True):
-                                reply_content = st.text_area("Bình luận của bạn:", 
-                                                           height=80,
-                                                           placeholder="Viết câu trả lời hoặc ý kiến...",
-                                                           key=f"reply_content_{post['id']}")
-                                
-                                col1, col2 = st.columns([2, 1])
-                                with col1:
-                                    submit_label = f"👮 Trả lời ({st.session_state.police_user['display_name']})"
-                                    submit_reply = st.form_submit_button(submit_label, 
-                                                                        use_container_width=True,
-                                                                        type="primary")
-                                
-                                if submit_reply:
-                                    if not reply_content.strip():
-                                        st.error("Vui lòng nhập nội dung bình luận!")
+                        reply_form_key = f"reply_form_{post['id']}"
+                        with st.form(reply_form_key, clear_on_submit=True):
+                            reply_content = st.text_area("Bình luận của bạn:", 
+                                                       height=80,
+                                                       placeholder="Viết câu trả lời hoặc ý kiến...")
+                            
+                            submitted_reply = st.form_submit_button(
+                                f"👮 Trả lời ({st.session_state.police_user['display_name']})",
+                                use_container_width=True
+                            )
+                            
+                            if submitted_reply and st.session_state.get('form_submitted') != reply_form_key:
+                                if not reply_content.strip():
+                                    st.error("Vui lòng nhập nội dung bình luận!")
+                                else:
+                                    result = save_forum_reply(
+                                        post['id'], 
+                                        reply_content, 
+                                        is_police=True,
+                                        police_info=st.session_state.police_user
+                                    )
+                                    
+                                    if result[0]:
+                                        st.success("✅ Đã gửi trả lời chính thức!")
+                                        st.session_state.form_submitted = reply_form_key
+                                        # KHÔNG dùng st.rerun()
                                     else:
-                                        with st.spinner("Đang gửi bình luận..."):
-                                            result = save_forum_reply(
-                                                post['id'], 
-                                                reply_content, 
-                                                is_police=True,
-                                                police_info=st.session_state.police_user
-                                            )
-                                            
-                                            if result[0]:  # Có reply_id
-                                                # Lưu thời gian reply
-                                                st.session_state.replied_posts[post['id']] = current_time
-                                                st.success("✅ Đã gửi trả lời chính thức!")
-                                                time.sleep(1)
-                                                st.rerun()
-                                            else:
-                                                st.error(f"❌ {result[1]}")
-                        else:
-                            remaining_time = 60 - int(current_time - last_reply_time)
-                            st.info(f"⏰ Bạn đã trả lời câu hỏi này gần đây. Vui lòng đợi {remaining_time} giây trước khi trả lời lại.")
+                                        st.error(f"❌ {result[1]}")
                     else:
                         st.warning("🔒 **Chỉ công an mới được bình luận và trả lời câu hỏi.**")
         else:
