@@ -1,9 +1,11 @@
 """
 🏛️ HỆ THỐNG TIẾP NHẬN PHẢN ÁNH & TƯ VẤN CỘNG ĐỒNG
-Tích hợp đầy đủ: SendGrid Email, Database, Diễn đàn, Voice-to-Text
+Tích hợp đầy đủ: SendGrid Email, Database, Diễn đàn
+ĐÃ SỬA: Thay bcrypt bằng werkzeug để chạy trên Streamlit Cloud
 """
 
 import streamlit as st
+import sqlite3  # THÊM DÒNG NÀY - thiếu import
 import pandas as pd
 from datetime import datetime
 import hashlib
@@ -11,6 +13,9 @@ import secrets
 import time
 import json
 import os
+
+# THAY ĐỔI QUAN TRỌNG: Import werkzeug thay bcrypt
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # Import SendGrid email service
 try:
@@ -70,6 +75,7 @@ st.markdown("""
         padding: 1rem;
         border-radius: 5px;
         border-left: 5px solid #28a745;
+        margin: 1rem 0;
     }
     .warning-box {
         background: #fff3cd;
@@ -77,6 +83,21 @@ st.markdown("""
         padding: 1rem;
         border-radius: 5px;
         border-left: 5px solid #ffc107;
+        margin: 1rem 0;
+    }
+    .official-reply {
+        background: #e8f4fd !important;
+        border-left: 4px solid #007bff !important;
+        border: 1px solid #007bff;
+    }
+    .user-reply {
+        background: #f8f9fa !important;
+    }
+    .tab-content {
+        padding: 1.5rem;
+        background: #f8f9fa;
+        border-radius: 10px;
+        margin-top: 1rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -141,15 +162,15 @@ def init_database():
         )
     ''')
     
-    # Tạo admin mặc định nếu chưa có
+    # Tạo admin mặc định nếu chưa có - SỬA: DÙNG werkzeug
     c.execute("SELECT COUNT(*) FROM police_users WHERE badge_number = 'CA001'")
     if c.fetchone()[0] == 0:
-        import bcrypt
-        hashed_pw = bcrypt.hashpw("congan123".encode(), bcrypt.gensalt()).decode()
+        # THAY ĐỔI QUAN TRỌNG: dùng generate_password_hash thay bcrypt
+        password_hash = generate_password_hash("congan123", method='pbkdf2:sha256')
         c.execute('''
             INSERT INTO police_users (badge_number, display_name, password_hash, role)
             VALUES (?, ?, ?, ?)
-        ''', ('CA001', 'Admin Công An', hashed_pw, 'admin'))
+        ''', ('CA001', 'Admin Công An', password_hash, 'admin'))
     
     conn.commit()
     conn.close()
@@ -175,7 +196,7 @@ def save_to_database(title, description, location="", incident_time=""):
     return report_id
 
 def handle_security_report(title, description, location, incident_time):
-    """Xử lý phản ánh và gửi email - PHẦN QUAN TRỌNG ĐÃ SỬA"""
+    """Xử lý phản ánh và gửi email"""
     
     # 1. Lưu vào database
     report_id = save_to_database(title, description, location, incident_time)
@@ -237,6 +258,13 @@ def save_forum_reply(post_id, content, is_police=False, police_info=None):
         author_id = police_info['badge_number']
         display_name = police_info['display_name']
         is_official = 1
+        
+        # Cập nhật trạng thái đã trả lời
+        c.execute('''
+            UPDATE forum_posts 
+            SET is_answered = 1 
+            WHERE id = ?
+        ''', (post_id,))
     else:
         author_type = "anonymous"
         author_id = f"Khách_{secrets.token_hex(4)}"
@@ -256,18 +284,25 @@ def save_forum_reply(post_id, content, is_police=False, police_info=None):
     
     return author_id
 
-def get_forum_posts():
+def get_forum_posts(category_filter="Tất cả"):
     """Lấy danh sách bài đăng"""
     conn = sqlite3.connect('community_app.db')
+    
     query = '''
         SELECT id, title, content, category, anonymous_id, 
                created_at, reply_count, is_answered,
                strftime('%d/%m/%Y %H:%M', created_at) as formatted_date
         FROM forum_posts
-        ORDER BY created_at DESC
-        LIMIT 50
     '''
-    df = pd.read_sql_query(query, conn)
+    
+    params = []
+    if category_filter != "Tất cả":
+        query += " WHERE category = ?"
+        params.append(category_filter)
+    
+    query += " ORDER BY created_at DESC LIMIT 50"
+    
+    df = pd.read_sql_query(query, conn, params=params)
     conn.close()
     return df
 
@@ -285,27 +320,31 @@ def get_forum_replies(post_id):
     conn.close()
     return df
 
-# ================ ĐĂNG NHẬP CÔNG AN ================
+# ================ ĐĂNG NHẬP CÔNG AN - SỬA ================
 def police_login(badge_number, password):
-    """Đăng nhập công an"""
+    """Đăng nhập công an - SỬA: DÙNG werkzeug"""
     try:
-        import bcrypt
         conn = sqlite3.connect('community_app.db')
         c = conn.cursor()
         
-        c.execute('SELECT badge_number, display_name, password_hash, role FROM police_users WHERE badge_number = ?', 
-                 (badge_number,))
+        c.execute('''
+            SELECT badge_number, display_name, password_hash, role 
+            FROM police_users 
+            WHERE badge_number = ?
+        ''', (badge_number,))
+        
         user = c.fetchone()
         conn.close()
         
-        if user and bcrypt.checkpw(password.encode(), user[2].encode()):
+        if user and check_password_hash(user[2], password):  # SỬA: check_password_hash
             return {
                 'badge_number': user[0],
                 'display_name': user[1],
                 'role': user[3]
             }
         return None
-    except Exception:
+    except Exception as e:
+        st.error(f"Lỗi đăng nhập: {str(e)}")
         return None
 
 # ================ GIAO DIỆN CHÍNH ================
@@ -332,24 +371,29 @@ def main():
         
         if not st.session_state.police_user:
             # Form đăng nhập
-            badge = st.text_input("Số hiệu")
-            password = st.text_input("Mật khẩu", type="password")
+            badge = st.text_input("Số hiệu", key="login_badge")
+            password = st.text_input("Mật khẩu", type="password", key="login_password")
             
-            if st.button("Đăng nhập", type="primary", use_container_width=True):
-                user = police_login(badge, password)
-                if user:
-                    st.session_state.police_user = user
-                    st.success(f"Xin chào {user['display_name']}!")
-                    st.rerun()
-                else:
-                    st.error("Sai số hiệu hoặc mật khẩu!")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Đăng nhập", type="primary", use_container_width=True):
+                    user = police_login(badge, password)
+                    if user:
+                        st.session_state.police_user = user
+                        st.success(f"Xin chào {user['display_name']}!")
+                        st.rerun()
+                    else:
+                        st.error("Sai số hiệu hoặc mật khẩu!")
+            with col2:
+                if st.button("Đăng xuất", disabled=True, use_container_width=True):
+                    pass
         else:
             # Thông tin đã đăng nhập
             user = st.session_state.police_user
-            st.markdown(f'<span class="police-badge">👮 {user["display_name"]}</span>', unsafe_allow_html=True)
-            st.info(f"Số hiệu: {user['badge_number']}")
+            st.success(f"👮 **{user['display_name']}**")
+            st.info(f"Số hiệu: `{user['badge_number']}`")
             
-            if st.button("Đăng xuất", use_container_width=True):
+            if st.button("🚪 Đăng xuất", use_container_width=True):
                 st.session_state.police_user = None
                 st.rerun()
         
@@ -360,15 +404,28 @@ def main():
         conn = sqlite3.connect('community_app.db')
         today = datetime.now().strftime('%Y-%m-%d')
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             total_reports = pd.read_sql_query("SELECT COUNT(*) FROM security_reports", conn)
             st.metric("Phản ánh", int(total_reports.iloc[0,0]))
         with col2:
             total_posts = pd.read_sql_query("SELECT COUNT(*) FROM forum_posts", conn)
             st.metric("Câu hỏi", int(total_posts.iloc[0,0]))
+        with col3:
+            today_reports = pd.read_sql_query(
+                "SELECT COUNT(*) FROM security_reports WHERE DATE(created_at) = ?", 
+                conn, params=(today,)
+            )
+            st.metric("Hôm nay", int(today_reports.iloc[0,0]))
         
         conn.close()
+        
+        # Thông tin SendGrid
+        st.markdown("---")
+        if SENDGRID_AVAILABLE:
+            st.success("✅ SendGrid: Đã kết nối")
+        else:
+            st.warning("⚠️ SendGrid: Chưa cấu hình")
     
     # Main tabs
     tab1, tab2, tab3 = st.tabs(["📢 PHẢN ÁNH AN NINH", "💬 DIỄN ĐÀN", "ℹ️ HƯỚNG DẪN"])
@@ -382,10 +439,10 @@ def main():
             ⚠️ **TÍNH NĂNG EMAIL CHƯA SẴN SÀNG**
             
             Phản ánh sẽ chỉ được lưu vào database.
-            Để gửi email tự động, cần cấu hình SendGrid.
+            Để gửi email tự động, cần cấu hình SendGrid trong file `email_service.py`.
             """)
         
-        with st.form("security_report_form"):
+        with st.form("security_report_form", clear_on_submit=True):
             col1, col2 = st.columns(2)
             
             with col1:
@@ -408,7 +465,7 @@ def main():
                 if not title or not description:
                     st.error("⚠️ Vui lòng điền tiêu đề và mô tả sự việc!")
                 else:
-                    # Xử lý phản ánh - GỌI HÀM ĐÃ SỬA
+                    # Xử lý phản ánh
                     report_id, email_success, email_message = handle_security_report(
                         title, description, location, incident_time
                     )
@@ -416,7 +473,7 @@ def main():
                     if email_success:
                         st.markdown(f"""
                         <div class="success-box">
-                            <h4>✅ ĐÃ TIẾP NHẬN PHẢN ÁNH #{report_id}</h4>
+                            <h4>✅ ĐÃ TIẾP NHẬN PHẢN ÁNH #{report_id:06d}</h4>
                             <p>{email_message}</p>
                             <p>Phản ánh đã được gửi đến Công an. Cảm ơn bạn đã đóng góp!</p>
                         </div>
@@ -424,9 +481,9 @@ def main():
                     else:
                         st.markdown(f"""
                         <div class="warning-box">
-                            <h4>⚠️ ĐÃ LƯU PHẢN ÁNH #{report_id}</h4>
+                            <h4>⚠️ ĐÃ LƯU PHẢN ÁNH #{report_id:06d}</h4>
                             <p>{email_message}</p>
-                            <p>Vui lòng liên hệ trực tiếp qua số điện thoại nếu cần thiết.</p>
+                            <p>Vui lòng liên hệ trực tiếp Công an địa phương nếu cần thiết.</p>
                         </div>
                         """, unsafe_allow_html=True)
     
@@ -445,7 +502,7 @@ def main():
             with st.expander("✍️ ĐẶT CÂU HỎI MỚI", expanded=True):
                 with st.form("new_question_form"):
                     q_title = st.text_input("Tiêu đề câu hỏi *")
-                    q_category = st.selectbox("Chủ đề", 
+                    q_category = st.selectbox("Chủ đề *", 
                                             ["Hỏi đáp pháp luật", "Giải quyết mâu thuẫn", 
                                              "Tư vấn thủ tục", "An ninh trật tự", "Khác"])
                     q_content = st.text_area("Nội dung chi tiết *", height=150,
@@ -459,7 +516,7 @@ def main():
                     
                     if submit_q and q_title and q_content:
                         post_id, anon_id = save_forum_post(q_title, q_content, q_category)
-                        st.success(f"✅ Câu hỏi đã đăng! (Bạn là: {anon_id})")
+                        st.success(f"✅ Câu hỏi đã đăng! (ID: {anon_id})")
                         st.session_state.show_new_question = False
                         st.rerun()
                     
@@ -467,18 +524,44 @@ def main():
                         st.session_state.show_new_question = False
                         st.rerun()
         
-        # Hiển thị danh sách câu hỏi
+        # Bộ lọc
         st.markdown("---")
-        st.subheader("📚 Câu hỏi gần đây")
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            filter_category = st.selectbox("Lọc theo chủ đề", 
+                                         ["Tất cả", "Hỏi đáp pháp luật", "Giải quyết mâu thuẫn", 
+                                          "Tư vấn thủ tục", "An ninh trật tự"])
+        with col2:
+            search_term = st.text_input("Tìm kiếm...")
         
-        df_posts = get_forum_posts()
+        # Hiển thị danh sách câu hỏi
+        df_posts = get_forum_posts(filter_category if filter_category != "Tất cả" else "Tất cả")
         
         if not df_posts.empty:
+            # Áp dụng tìm kiếm
+            if search_term:
+                df_posts = df_posts[
+                    df_posts['title'].str.contains(search_term, case=False) | 
+                    df_posts['content'].str.contains(search_term, case=False)
+                ]
+            
             for _, post in df_posts.iterrows():
-                with st.expander(f"❓ {post['title']} - {post['formatted_date']}", expanded=False):
-                    st.write(f"**Người hỏi:** {post['anonymous_id']}")
-                    st.write(f"**Chủ đề:** {post['category']}")
-                    st.write(f"**Nội dung:** {post['content']}")
+                status_badge = "✅ Đã trả lời" if post['is_answered'] else "⏳ Chờ trả lời"
+                badge_color = "#28a745" if post['is_answered'] else "#ffc107"
+                
+                with st.expander(f"**{post['title']}** - {post['formatted_date']} • {status_badge}", expanded=False):
+                    st.markdown(f"""
+                    <div style="margin-bottom: 1rem;">
+                        <strong>👤 {post['anonymous_id']}</strong> • 
+                        <span style="background-color: {badge_color}; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.8em;">
+                            {status_badge}
+                        </span> • 
+                        <strong>{post['category']}</strong>
+                    </div>
+                    <div style="background: #f8f9fa; padding: 1rem; border-radius: 5px; margin-bottom: 1rem;">
+                        {post['content']}
+                    </div>
+                    """, unsafe_allow_html=True)
                     
                     # Hiển thị bình luận
                     df_replies = get_forum_replies(post['id'])
@@ -487,36 +570,32 @@ def main():
                     
                     if not df_replies.empty:
                         for _, reply in df_replies.iterrows():
-                            if reply['is_official']:
-                                st.markdown(f"""
-                                <div style='background: #e8f4fd; padding: 1rem; margin: 0.5rem 0; border-radius: 5px; border-left: 3px solid #007bff;'>
-                                    <strong>👮 {reply['display_name']}</strong> 
-                                    <small style='color: #666;'>({reply['formatted_date']})</small>
-                                    <p>{reply['content']}</p>
-                                </div>
-                                """, unsafe_allow_html=True)
-                            else:
-                                st.markdown(f"""
-                                <div style='background: #f8f9fa; padding: 1rem; margin: 0.5rem 0; border-radius: 5px;'>
-                                    <strong>👤 {reply['display_name']}</strong> 
-                                    <small style='color: #666;'>({reply['formatted_date']})</small>
-                                    <p>{reply['content']}</p>
-                                </div>
-                                """, unsafe_allow_html=True)
+                            reply_class = "official-reply" if reply['is_official'] else "user-reply"
+                            author_icon = "👮" if reply['is_official'] else "👤"
+                            
+                            st.markdown(f"""
+                            <div class="{reply_class}" style="padding: 1rem; margin: 0.5rem 0; border-radius: 5px;">
+                                <strong>{author_icon} {reply['display_name']}</strong> 
+                                <small style="color: #666;">({reply['formatted_date']})</small>
+                                <p style="margin-top: 0.5rem;">{reply['content']}</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        st.info("Chưa có bình luận nào.")
                     
                     # Form bình luận
                     with st.form(key=f"reply_form_{post['id']}"):
-                        reply_content = st.text_area("Bình luận của bạn", height=80,
+                        reply_content = st.text_area("Bình luận của bạn:", height=80,
                                                    placeholder="Viết câu trả lời hoặc ý kiến...")
                         
-                        col1, col2 = st.columns(2)
+                        col1, col2 = st.columns([2, 1])
                         with col1:
                             if st.session_state.police_user:
-                                submit_label = "👮 Trả lời (Công an)"
+                                submit_label = f"👮 Trả lời ({st.session_state.police_user['display_name']})"
                             else:
                                 submit_label = "💬 Gửi bình luận"
                             
-                            submit_reply = st.form_submit_button(submit_label)
+                            submit_reply = st.form_submit_button(submit_label, use_container_width=True)
                         
                         if submit_reply and reply_content:
                             if st.session_state.police_user:
@@ -543,37 +622,53 @@ def main():
         with col1:
             st.markdown("""
             ### 📢 **Phản ánh An ninh:**
-            1. Điền thông tin sự việc
-            2. Nhấn **GỬI PHẢN ÁNH**
-            3. Hệ thống tự động gửi đến Công an
+            1. **Điền thông tin** sự việc
+            2. **Nhấn GỬI PHẢN ÁNH**
+            3. Hệ thống tự động **gửi đến Công an**
             
             ### 💬 **Diễn đàn:**
-            1. Đặt câu hỏi ẩn danh
-            2. Công an trả lời chính thức
-            3. Mọi người cùng thảo luận
+            1. **Đặt câu hỏi** ẩn danh
+            2. **Công an trả lời** chính thức
+            3. **Mọi người cùng** thảo luận
             """)
         
         with col2:
             st.markdown("""
             ### 🔒 **Bảo mật:**
-            - Không lưu thông tin cá nhân
-            - ID ngẫu nhiên mỗi lần
-            - Không cần đăng ký
+            - **Không lưu** thông tin cá nhân
+            - **ID ngẫu nhiên** mỗi lần
+            - **Không cần** đăng ký tài khoản
             
             ### 👮 **Dành cho Công an:**
-            - Đăng nhập bằng số hiệu
-            - Trả lời câu hỏi chính thức
-            - Theo dõi phản ánh
+            - **Đăng nhập** bằng số hiệu
+            - **Trả lời** câu hỏi chính thức
+            - **Theo dõi** phản ánh
             """)
         
         # Thông tin liên hệ
         st.markdown("---")
-        st.markdown("""
-        ### 📞 Liên hệ khẩn cấp
-        - **Hotline Công an:** 113
-        - **Trực ban địa phương:** Liên hệ Công an phường/xã
-        - **Tình huống nguy hiểm:** Gọi ngay 113
-        """)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown("""
+            ### 📞 Liên hệ khẩn cấp
+            - **Hotline Công an:** 113
+            - **Trực ban địa phương**
+            - **Tình huống nguy hiểm:** Gọi ngay 113
+            """)
+        with col2:
+            st.markdown("""
+            ### ⏰ Thời gian tiếp nhận
+            - **Phản ánh:** 24/7
+            - **Trả lời diễn đàn:** Trong giờ hành chính
+            - **Xử lý sự việc:** Theo quy trình
+            """)
+        with col3:
+            st.markdown("""
+            ### 📱 Hỗ trợ kỹ thuật
+            - **Lỗi kỹ thuật:** Ghi lại mã lỗi
+            - **Góp ý:** Qua diễn đàn
+            - **Cập nhật:** Thường xuyên
+            """)
 
 # Chạy ứng dụng
 if __name__ == "__main__":
