@@ -1,7 +1,7 @@
 """
 🏛️ HỆ THỐNG TIẾP NHẬN PHẢN ÁNH & TƯ VẤN CỘNG ĐỒNG
 Tích hợp đầy đủ: SendGrid Email, Database, Diễn đàn
-ĐÃ SỬA: Chỉ công an mới được bình luận & fix lỗi lặp bình luận
+ĐÃ SỬA: Fix lỗi database và chỉ công an được bình luận
 """
 
 import streamlit as st
@@ -11,7 +11,6 @@ from datetime import datetime
 import hashlib
 import secrets
 import time
-import json
 import os
 
 # THAY ĐỔI QUAN TRỌNG: Import werkzeug thay bcrypt
@@ -23,7 +22,10 @@ try:
     SENDGRID_AVAILABLE = True
 except ImportError:
     SENDGRID_AVAILABLE = False
-    st.sidebar.warning("⚠️ Chưa có file email_service.py")
+
+# ================ CẤU HÌNH DATABASE ================
+# SỬA: Dùng đường dẫn đúng cho Streamlit Cloud
+DB_PATH = 'community_app.db'
 
 # ================ CẤU HÌNH TRANG ================
 st.set_page_config(
@@ -109,97 +111,102 @@ st.markdown("""
 # ================ KHỞI TẠO DATABASE ================
 def init_database():
     """Khởi tạo tất cả bảng database"""
-    conn = sqlite3.connect('community_app.db')
-    c = conn.cursor()
-    
-    # Bảng phản ánh an ninh
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS security_reports (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            description TEXT NOT NULL,
-            location TEXT,
-            incident_time TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            ip_hash TEXT,
-            email_sent BOOLEAN DEFAULT 0
-        )
-    ''')
-    
-    # Bảng diễn đàn
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS forum_posts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            content TEXT NOT NULL,
-            category TEXT DEFAULT 'Hỏi đáp pháp luật',
-            anonymous_id TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            reply_count INTEGER DEFAULT 0,
-            is_answered BOOLEAN DEFAULT 0,
-            UNIQUE(title, anonymous_id, created_at)  # THÊM CONSTRAINT để tránh trùng lặp
-        )
-    ''')
-    
-    # Bảng bình luận
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS forum_replies (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            post_id INTEGER,
-            content TEXT NOT NULL,
-            author_type TEXT DEFAULT 'anonymous',
-            author_id TEXT,
-            display_name TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            is_official BOOLEAN DEFAULT 0,
-            FOREIGN KEY (post_id) REFERENCES forum_posts(id),
-            UNIQUE(post_id, author_id, content, created_at)  # THÊM CONSTRAINT để tránh trùng lặp
-        )
-    ''')
-    
-    # Bảng công an
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS police_users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            badge_number TEXT UNIQUE NOT NULL,
-            display_name TEXT NOT NULL,
-            password_hash TEXT NOT NULL,
-            role TEXT DEFAULT 'officer'
-        )
-    ''')
-    
-    # Tạo admin mặc định nếu chưa có - SỬA: DÙNG werkzeug
-    c.execute("SELECT COUNT(*) FROM police_users WHERE badge_number = 'CA001'")
-    if c.fetchone()[0] == 0:
-        # THAY ĐỔI QUAN TRỌNG: dùng generate_password_hash thay bcrypt
-        password_hash = generate_password_hash("congan123", method='pbkdf2:sha256')
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        
+        # Bảng phản ánh an ninh
         c.execute('''
-            INSERT INTO police_users (badge_number, display_name, password_hash, role)
-            VALUES (?, ?, ?, ?)
-        ''', ('CA001', 'Admin Công An', password_hash, 'admin'))
-    
-    conn.commit()
-    conn.close()
+            CREATE TABLE IF NOT EXISTS security_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                location TEXT,
+                incident_time TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ip_hash TEXT,
+                email_sent BOOLEAN DEFAULT 0
+            )
+        ''')
+        
+        # Bảng diễn đàn
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS forum_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                category TEXT DEFAULT 'Hỏi đáp pháp luật',
+                anonymous_id TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                reply_count INTEGER DEFAULT 0,
+                is_answered BOOLEAN DEFAULT 0
+            )
+        ''')
+        
+        # Bảng bình luận
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS forum_replies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id INTEGER,
+                content TEXT NOT NULL,
+                author_type TEXT DEFAULT 'anonymous',
+                author_id TEXT,
+                display_name TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_official BOOLEAN DEFAULT 0,
+                FOREIGN KEY (post_id) REFERENCES forum_posts(id)
+            )
+        ''')
+        
+        # Bảng công an
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS police_users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                badge_number TEXT UNIQUE NOT NULL,
+                display_name TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT DEFAULT 'officer'
+            )
+        ''')
+        
+        # Tạo admin mặc định nếu chưa có
+        c.execute("SELECT COUNT(*) FROM police_users WHERE badge_number = 'CA001'")
+        if c.fetchone()[0] == 0:
+            password_hash = generate_password_hash("congan123", method='pbkdf2:sha256')
+            c.execute('''
+                INSERT INTO police_users (badge_number, display_name, password_hash, role)
+                VALUES (?, ?, ?, ?)
+            ''', ('CA001', 'Admin Công An', password_hash, 'admin'))
+        
+        conn.commit()
+        conn.close()
+        
+    except Exception as e:
+        st.error(f"Lỗi khởi tạo database: {str(e)}")
 
 # ================ HÀM XỬ LÝ PHẢN ÁNH ================
 def save_to_database(title, description, location="", incident_time=""):
     """Lưu phản ánh vào database"""
-    conn = sqlite3.connect('community_app.db')
-    c = conn.cursor()
-    
-    # Tạo hash từ thời gian để tracking
-    ip_hash = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
-    
-    c.execute('''
-        INSERT INTO security_reports (title, description, location, incident_time, ip_hash)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (title, description, location, incident_time, ip_hash))
-    
-    conn.commit()
-    report_id = c.lastrowid
-    conn.close()
-    
-    return report_id
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        
+        # Tạo hash từ thời gian để tracking
+        ip_hash = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
+        
+        c.execute('''
+            INSERT INTO security_reports (title, description, location, incident_time, ip_hash)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (title, description, location, incident_time, ip_hash))
+        
+        conn.commit()
+        report_id = c.lastrowid
+        conn.close()
+        
+        return report_id
+    except Exception as e:
+        st.error(f"Lỗi lưu phản ánh: {str(e)}")
+        return None
 
 def handle_security_report(title, description, location, incident_time):
     """Xử lý phản ánh và gửi email"""
@@ -207,7 +214,10 @@ def handle_security_report(title, description, location, incident_time):
     # 1. Lưu vào database
     report_id = save_to_database(title, description, location, incident_time)
     
-    # 2. Chuẩn bị dữliệu email
+    if not report_id:
+        return None, False, "Lỗi lưu database"
+    
+    # 2. Chuẩn bị dữ liệu email
     report_data = {
         'title': title,
         'description': description,
@@ -226,37 +236,26 @@ def handle_security_report(title, description, location, incident_time):
     
     # 4. Cập nhật trạng thái email trong database
     if email_success:
-        conn = sqlite3.connect('community_app.db')
-        c = conn.cursor()
-        c.execute('UPDATE security_reports SET email_sent = 1 WHERE id = ?', (report_id,))
-        conn.commit()
-        conn.close()
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute('UPDATE security_reports SET email_sent = 1 WHERE id = ?', (report_id,))
+            conn.commit()
+            conn.close()
+        except:
+            pass
     
     # 5. Hiển thị kết quả cho người dùng
     return report_id, email_success, email_message
 
 # ================ HÀM DIỄN ĐÀN ================
 def save_forum_post(title, content, category):
-    """Lưu bài đăng diễn đàn với kiểm tra trùng lặp"""
-    conn = sqlite3.connect('community_app.db')
-    c = conn.cursor()
-    
-    anonymous_id = f"NgườiDân_{secrets.token_hex(4)}"
-    
+    """Lưu bài đăng diễn đàn"""
     try:
-        # Kiểm tra xem có bài đăng trùng trong 10 phút không
-        time_threshold = (datetime.now().timestamp() - 600)  # 10 phút trước
-        c.execute('''
-            SELECT COUNT(*) FROM forum_posts 
-            WHERE title = ? AND anonymous_id LIKE ? 
-            AND created_at > datetime(?, 'unixepoch')
-        ''', (title, 'NgườiDân_%', time_threshold))
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
         
-        duplicate_count = c.fetchone()[0]
-        
-        if duplicate_count > 0:
-            conn.close()
-            return None, "Bài đăng trùng lặp. Vui lòng đợi 10 phút trước khi đăng câu hỏi mới."
+        anonymous_id = f"NgườiDân_{secrets.token_hex(4)}"
         
         # Thêm bài đăng mới
         c.execute('''
@@ -268,48 +267,36 @@ def save_forum_post(title, content, category):
         post_id = c.lastrowid
         conn.close()
         
-        return post_id, anonymous_id
+        return post_id, anonymous_id, None
         
-    except sqlite3.IntegrityError:
-        conn.rollback()
-        conn.close()
-        return None, "Bài đăng đã tồn tại trong hệ thống."
     except Exception as e:
-        conn.rollback()
-        conn.close()
-        return None, f"Lỗi hệ thống: {str(e)}"
+        return None, None, f"Lỗi: {str(e)}"
 
 def save_forum_reply(post_id, content, is_police=False, police_info=None):
-    """Lưu bình luận diễn đàn với kiểm tra trùng lặp"""
-    conn = sqlite3.connect('community_app.db')
-    c = conn.cursor()
-    
+    """Lưu bình luận diễn đàn - CHỈ CÔNG AN ĐƯỢC PHÉP"""
     try:
-        # Kiểm tra xem bình luận đã tồn tại chưa (trong 5 phút gần nhất)
-        time_threshold = (datetime.now().timestamp() - 300)  # 5 phút trước
-        
-        if is_police and police_info:
-            author_type = "police"
-            author_id = police_info['badge_number']
-            display_name = police_info['display_name']
-            is_official = 1
-            
-            # Kiểm tra trùng lặp cho công an
-            c.execute('''
-                SELECT COUNT(*) FROM forum_replies 
-                WHERE post_id = ? AND author_id = ? AND content = ?
-                AND created_at > datetime(?, 'unixepoch')
-            ''', (post_id, author_id, content, time_threshold))
-        else:
-            # Người dân bình thường KHÔNG được phép bình luận
-            conn.close()
+        if not is_police or not police_info:
             return None, "Chỉ công an mới được bình luận và trả lời câu hỏi."
         
-        duplicate_count = c.fetchone()[0]
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
         
-        if duplicate_count > 0:
+        author_type = "police"
+        author_id = police_info['badge_number']
+        display_name = police_info['display_name']
+        is_official = 1
+        
+        # Kiểm tra xem đã trả lời bài này chưa (trong vòng 1 phút)
+        time_threshold = time.time() - 60
+        c.execute('''
+            SELECT COUNT(*) FROM forum_replies 
+            WHERE post_id = ? AND author_id = ? 
+            AND created_at > datetime(?, 'unixepoch')
+        ''', (post_id, author_id, time_threshold))
+        
+        if c.fetchone()[0] > 0:
             conn.close()
-            return None, "Bình luận trùng lặp. Vui lòng không gửi cùng nội dung nhiều lần."
+            return None, "Bạn đã trả lời bài viết này gần đây. Vui lòng đợi 1 phút."
         
         # Thêm bình luận mới
         c.execute('''
@@ -317,15 +304,13 @@ def save_forum_reply(post_id, content, is_police=False, police_info=None):
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (post_id, content, author_type, author_id, display_name, is_official))
         
-        # Cập nhật số reply - CHỈ CẬP NHẬT 1 LẦN
-        c.execute('''
-            UPDATE forum_posts 
-            SET reply_count = (
-                SELECT COUNT(*) FROM forum_replies WHERE post_id = ?
-            ),
-            is_answered = 1
-            WHERE id = ?
-        ''', (post_id, post_id))
+        # Cập nhật số reply và trạng thái
+        c.execute('UPDATE forum_posts SET is_answered = 1 WHERE id = ?', (post_id,))
+        
+        # Đếm lại tổng số reply
+        c.execute('SELECT COUNT(*) FROM forum_replies WHERE post_id = ?', (post_id,))
+        reply_count = c.fetchone()[0]
+        c.execute('UPDATE forum_posts SET reply_count = ? WHERE id = ?', (reply_count, post_id))
         
         conn.commit()
         reply_id = c.lastrowid
@@ -333,56 +318,56 @@ def save_forum_reply(post_id, content, is_police=False, police_info=None):
         
         return reply_id, "Bình luận đã được gửi thành công!"
         
-    except sqlite3.IntegrityError:
-        conn.rollback()
-        conn.close()
-        return None, "Bình luận đã tồn tại trong hệ thống."
     except Exception as e:
-        conn.rollback()
-        conn.close()
         return None, f"Lỗi hệ thống: {str(e)}"
 
 def get_forum_posts(category_filter="Tất cả"):
     """Lấy danh sách bài đăng"""
-    conn = sqlite3.connect('community_app.db')
-    
-    query = '''
-        SELECT id, title, content, category, anonymous_id, 
-               created_at, reply_count, is_answered,
-               strftime('%d/%m/%Y %H:%M', created_at) as formatted_date
-        FROM forum_posts
-    '''
-    
-    params = []
-    if category_filter != "Tất cả":
-        query += " WHERE category = ?"
-        params.append(category_filter)
-    
-    query += " ORDER BY created_at DESC LIMIT 50"
-    
-    df = pd.read_sql_query(query, conn, params=params)
-    conn.close()
-    return df
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        
+        query = '''
+            SELECT id, title, content, category, anonymous_id, 
+                   created_at, reply_count, is_answered,
+                   strftime('%d/%m/%Y %H:%M', created_at) as formatted_date
+            FROM forum_posts
+        '''
+        
+        params = []
+        if category_filter != "Tất cả":
+            query += " WHERE category = ?"
+            params.append(category_filter)
+        
+        query += " ORDER BY created_at DESC LIMIT 50"
+        
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        return df
+    except:
+        return pd.DataFrame()
 
 def get_forum_replies(post_id):
     """Lấy bình luận của bài đăng"""
-    conn = sqlite3.connect('community_app.db')
-    query = '''
-        SELECT id, content, author_type, display_name, is_official,
-               strftime('%d/%m/%Y %H:%M', created_at) as formatted_date
-        FROM forum_replies
-        WHERE post_id = ?
-        ORDER BY created_at ASC
-    '''
-    df = pd.read_sql_query(query, conn, params=(post_id,))
-    conn.close()
-    return df
-
-# ================ ĐĂNG NHẬP CÔNG AN - SỬA ================
-def police_login(badge_number, password):
-    """Đăng nhập công an - SỬA: DÙNG werkzeug"""
     try:
-        conn = sqlite3.connect('community_app.db')
+        conn = sqlite3.connect(DB_PATH)
+        query = '''
+            SELECT id, content, author_type, display_name, is_official,
+                   strftime('%d/%m/%Y %H:%M', created_at) as formatted_date
+            FROM forum_replies
+            WHERE post_id = ?
+            ORDER BY created_at ASC
+        '''
+        df = pd.read_sql_query(query, conn, params=(post_id,))
+        conn.close()
+        return df
+    except:
+        return pd.DataFrame()
+
+# ================ ĐĂNG NHẬP CÔNG AN ================
+def police_login(badge_number, password):
+    """Đăng nhập công an"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         
         c.execute('''
@@ -394,7 +379,7 @@ def police_login(badge_number, password):
         user = c.fetchone()
         conn.close()
         
-        if user and check_password_hash(user[2], password):  # SỬA: check_password_hash
+        if user and check_password_hash(user[2], password):
             return {
                 'badge_number': user[0],
                 'display_name': user[1],
@@ -418,7 +403,7 @@ def main():
     if 'show_new_question' not in st.session_state:
         st.session_state.show_new_question = False
     if 'replied_posts' not in st.session_state:
-        st.session_state.replied_posts = set()  # Lưu các post đã reply trong session
+        st.session_state.replied_posts = {}
     
     # Header
     st.markdown("""
@@ -459,31 +444,34 @@ def main():
             
             if st.button("🚪 Đăng xuất", use_container_width=True):
                 st.session_state.police_user = None
-                st.session_state.replied_posts = set()
+                st.session_state.replied_posts = {}
                 st.rerun()
         
         # Thông tin hệ thống
         st.markdown("---")
         st.markdown("### 📊 Thống kê nhanh")
         
-        conn = sqlite3.connect('community_app.db')
-        today = datetime.now().strftime('%Y-%m-%d')
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            total_reports = pd.read_sql_query("SELECT COUNT(*) FROM security_reports", conn)
-            st.metric("Phản ánh", int(total_reports.iloc[0,0]))
-        with col2:
-            total_posts = pd.read_sql_query("SELECT COUNT(*) FROM forum_posts", conn)
-            st.metric("Câu hỏi", int(total_posts.iloc[0,0]))
-        with col3:
-            today_reports = pd.read_sql_query(
-                "SELECT COUNT(*) FROM security_reports WHERE DATE(created_at) = ?", 
-                conn, params=(today,)
-            )
-            st.metric("Hôm nay", int(today_reports.iloc[0,0]))
-        
-        conn.close()
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            today = datetime.now().strftime('%Y-%m-%d')
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                total_reports = pd.read_sql_query("SELECT COUNT(*) FROM security_reports", conn)
+                st.metric("Phản ánh", int(total_reports.iloc[0,0]))
+            with col2:
+                total_posts = pd.read_sql_query("SELECT COUNT(*) FROM forum_posts", conn)
+                st.metric("Câu hỏi", int(total_posts.iloc[0,0]))
+            with col3:
+                today_reports = pd.read_sql_query(
+                    "SELECT COUNT(*) FROM security_reports WHERE DATE(created_at) = ?", 
+                    conn, params=(today,)
+                )
+                st.metric("Hôm nay", int(today_reports.iloc[0,0]))
+            
+            conn.close()
+        except:
+            st.warning("Không thể kết nối database")
         
         # Thông tin SendGrid
         st.markdown("---")
@@ -535,22 +523,25 @@ def main():
                         title, description, location, incident_time
                     )
                     
-                    if email_success:
-                        st.markdown(f"""
-                        <div class="success-box">
-                            <h4>✅ ĐÃ TIẾP NHẬN PHẢN ÁNH #{report_id:06d}</h4>
-                            <p>{email_message}</p>
-                            <p>Phản ánh đã được gửi đến Công an. Cảm ơn bạn đã đóng góp!</p>
-                        </div>
-                        """, unsafe_allow_html=True)
+                    if report_id:
+                        if email_success:
+                            st.markdown(f"""
+                            <div class="success-box">
+                                <h4>✅ ĐÃ TIẾP NHẬN PHẢN ÁNH #{report_id:06d}</h4>
+                                <p>{email_message}</p>
+                                <p>Phản ánh đã được gửi đến Công an. Cảm ơn bạn đã đóng góp!</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"""
+                            <div class="warning-box">
+                                <h4>⚠️ ĐÃ LƯU PHẢN ÁNH #{report_id:06d}</h4>
+                                <p>{email_message}</p>
+                                <p>Vui lòng liên hệ trực tiếp Công an địa phương nếu cần thiết.</p>
+                            </div>
+                            """, unsafe_allow_html=True)
                     else:
-                        st.markdown(f"""
-                        <div class="warning-box">
-                            <h4>⚠️ ĐÃ LƯU PHẢN ÁNH #{report_id:06d}</h4>
-                            <p>{email_message}</p>
-                            <p>Vui lòng liên hệ trực tiếp Công an địa phương nếu cần thiết.</p>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        st.error("❌ Lỗi lưu phản ánh. Vui lòng thử lại!")
     
     # ========= TAB 2: DIỄN ĐÀN =========
     with tab2:
@@ -587,15 +578,14 @@ def main():
                         if not q_title or not q_content:
                             st.error("Vui lòng điền tiêu đề và nội dung câu hỏi!")
                         else:
-                            result = save_forum_post(q_title, q_content, q_category)
-                            if result[0]:  # Có post_id
-                                post_id, anon_id = result
+                            post_id, anon_id, error = save_forum_post(q_title, q_content, q_category)
+                            if post_id:
                                 st.success(f"✅ Câu hỏi đã đăng! (ID: {anon_id})")
                                 st.session_state.show_new_question = False
                                 time.sleep(1)
                                 st.rerun()
                             else:
-                                st.error(f"❌ {result[1]}")  # Hiển thị lỗi
+                                st.error(f"❌ {error}")
                     
                     if cancel_q:
                         st.session_state.show_new_question = False
@@ -663,10 +653,11 @@ def main():
                     
                     # Form bình luận - CHỈ HIỂN THỊ CHO CÔNG AN
                     if st.session_state.police_user:
-                        # Kiểm tra xem đã reply post này trong session chưa
-                        already_replied = post['id'] in st.session_state.replied_posts
+                        # Kiểm tra thời gian reply gần nhất
+                        current_time = time.time()
+                        last_reply_time = st.session_state.replied_posts.get(post['id'], 0)
                         
-                        if not already_replied:
+                        if current_time - last_reply_time > 60:  # 60 giây chờ
                             with st.form(key=f"reply_form_{post['id']}", clear_on_submit=True):
                                 reply_content = st.text_area("Bình luận của bạn:", 
                                                            height=80,
@@ -693,15 +684,16 @@ def main():
                                             )
                                             
                                             if result[0]:  # Có reply_id
-                                                # Thêm post_id vào danh sách đã reply
-                                                st.session_state.replied_posts.add(post['id'])
+                                                # Lưu thời gian reply
+                                                st.session_state.replied_posts[post['id']] = current_time
                                                 st.success("✅ Đã gửi trả lời chính thức!")
                                                 time.sleep(1)
                                                 st.rerun()
                                             else:
-                                                st.error(f"❌ {result[1]}")  # Hiển thị lỗi
+                                                st.error(f"❌ {result[1]}")
                         else:
-                            st.info("✅ Bạn đã trả lời câu hỏi này. Câu trả lời đang được hiển thị ở trên.")
+                            remaining_time = 60 - int(current_time - last_reply_time)
+                            st.info(f"⏰ Bạn đã trả lời câu hỏi này gần đây. Vui lòng đợi {remaining_time} giây trước khi trả lời lại.")
                     else:
                         st.warning("🔒 **Chỉ công an mới được bình luận và trả lời câu hỏi.**")
         else:
