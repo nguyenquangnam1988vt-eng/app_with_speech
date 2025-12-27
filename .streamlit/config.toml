@@ -1,7 +1,3 @@
-# .streamlit/config.toml
-[server]
-enableCORS = false
-enableXsrfProtection = false
-
 [environment]
-usePip = true  # QUAN TRỌNG: Dùng pip thay UV
+usePip = true
+forcePip = true
