@@ -1,6 +1,6 @@
 """
 🏛️ HỆ THỐNG TIẾP NHẬN PHẢN ÁNH & TƯ VẤN CỘNG ĐỒNG
-TÍCH HỢP GIỌNG NÓI - HỎI POPUP CHO PHÉP MICRO
+TÍCH HỢP GIỌNG NÓI - DÙNG STREAMLIT-MIC-RECORDER (DỄ DÀNG)
 """
 
 import streamlit as st
@@ -41,13 +41,21 @@ def format_vietnam_time(dt, format_str='%H:%M %d/%m/%Y'):
     return dt.strftime(format_str)
 
 # ================ IMPORT THƯ VIỆN ================
-SPEECH_AVAILABLE = False  # Mặc định là False
+# Không cần SpeechRecognition nữa, dùng streamlit-mic-recorder thay thế
+try:
+    from streamlit_mic_recorder import mic_recorder
+    MIC_RECORDER_AVAILABLE = True
+except ImportError:
+    MIC_RECORDER_AVAILABLE = False
+    st.warning("⚠️ Thư viện streamlit-mic-recorder chưa cài đặt. Vui lòng chạy: pip install streamlit-mic-recorder")
+
+# Vẫn giữ speech_recognition để xử lý audio nếu cần
+SPEECH_AVAILABLE = False
 try:
     import speech_recognition as sr
     SPEECH_AVAILABLE = True
 except ImportError:
     SPEECH_AVAILABLE = False
-    st.warning("⚠️ Thư viện speech_recognition chưa được cài đặt. Vui lòng chạy: pip install SpeechRecognition")
 
 # Import werkzeug thay bcrypt
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -158,8 +166,89 @@ st.markdown("""
     .speech-btn:hover {
         background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
     }
+    .mic-recorder-container {
+        background: linear-gradient(135deg, #f0f8ff 0%, #e6f3ff 100%);
+        padding: 20px;
+        border-radius: 10px;
+        border: 2px solid #3B82F6;
+        margin: 20px 0;
+    }
+    .audio-player {
+        width: 100%;
+        margin: 10px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+# ================ HÀM XỬ LÝ AUDIO MỚI (DÙNG STREAMLIT-MIC-RECORDER) ================
+def process_audio_to_text(audio_bytes, language='vi-VN'):
+    """Xử lý audio bytes thành văn bản"""
+    if not SPEECH_AVAILABLE:
+        return None, "Thư viện speech_recognition chưa cài đặt"
+    
+    try:
+        recognizer = sr.Recognizer()
+        
+        # Tạo file audio tạm thời
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
+            tmp_file.write(audio_bytes)
+            tmp_path = tmp_file.name
+        
+        try:
+            # Đọc file audio
+            with sr.AudioFile(tmp_path) as source:
+                audio = recognizer.record(source)
+            
+            # Nhận diện với Google
+            text = recognizer.recognize_google(audio, language=language)
+            
+            # Xóa file tạm
+            os.unlink(tmp_path)
+            
+            return text, None
+            
+        except sr.UnknownValueError:
+            os.unlink(tmp_path)
+            return None, "Không thể nhận diện giọng nói"
+        except sr.RequestError as e:
+            os.unlink(tmp_path)
+            return None, f"Lỗi kết nối: {str(e)}"
+            
+    except Exception as e:
+        return None, f"Lỗi xử lý audio: {str(e)}"
+
+def create_mic_recorder_component(key_suffix, label="Ghi âm"):
+    """Tạo component ghi âm với streamlit-mic-recorder"""
+    if not MIC_RECORDER_AVAILABLE:
+        return None
+    
+    st.markdown(f"<div class='mic-recorder-container'>", unsafe_allow_html=True)
+    st.markdown(f"### 🎤 {label}")
+    
+    # Hiển thị mic recorder
+    audio = mic_recorder(
+        start_prompt=f"🎤 Bắt đầu ghi âm {label}",
+        stop_prompt="⏹️ Dừng ghi âm",
+        key=f"recorder_{key_suffix}",
+        format="wav"
+    )
+    
+    if audio:
+        st.audio(audio['bytes'], format="audio/wav")
+        
+        # Nút để chuyển thành văn bản
+        if st.button(f"📝 Chuyển thành văn bản ({label})", key=f"convert_{key_suffix}"):
+            with st.spinner("Đang chuyển giọng nói thành văn bản..."):
+                text, error = process_audio_to_text(audio['bytes'])
+                if text:
+                    st.success(f"✅ **Kết quả:** {text}")
+                    return text
+                elif error:
+                    st.error(f"❌ {error}")
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+    return None
 
 # ================ HIỂN THỊ GIỜ VIỆT NAM ================
 def show_vietnam_time():
@@ -440,48 +529,6 @@ def police_login(badge_number, password):
     except Exception as e:
         return None
 
-# ================ HÀM NHẬN DIỆN GIỌNG NÓI ================
-def speech_to_text(language='vi-VN', timeout=10):
-    """Chuyển giọng nói thành văn bản"""
-    if not SPEECH_AVAILABLE:
-        return None, "Tính năng giọng nói chưa khả dụng"
-    
-    try:
-        recognizer = sr.Recognizer()
-        
-        # Kiểm tra micro có sẵn không
-        try:
-            mic_list = sr.Microphone.list_microphone_names()
-            if not mic_list:
-                return None, "Không tìm thấy micro"
-        except:
-            pass
-        
-        with sr.Microphone() as source:
-            # Điều chỉnh cho tiếng ồn môi trường
-            st.info("🔊 Đang điều chỉnh micro... Hãy giữ im lặng trong 1 giây")
-            recognizer.adjust_for_ambient_noise(source, duration=1)
-            
-            st.info("🎤 Đang nghe... Hãy nói ngay bây giờ!")
-            
-            # Ghi âm với timeout
-            try:
-                audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=15)
-            except sr.WaitTimeoutError:
-                return None, "Hết thời gian chờ, vui lòng nói trong vòng 10 giây"
-            
-        # Nhận diện với Google Speech Recognition
-        try:
-            text = recognizer.recognize_google(audio, language=language)
-            return text, None
-        except sr.UnknownValueError:
-            return None, "Không thể nhận diện giọng nói. Vui lòng thử lại"
-        except sr.RequestError as e:
-            return None, f"Lỗi kết nối: {str(e)}"
-            
-    except Exception as e:
-        return None, f"Lỗi: {str(e)}"
-
 # ================ GIAO DIỆN CHÍNH ================
 def main():
     """Hàm chính của ứng dụng"""
@@ -492,9 +539,8 @@ def main():
     session_defaults = {
         'police_user': None,
         'show_new_question': False,
-        'speech_target': None,
-        'speech_result': None,
-        'listening': False
+        'speech_texts': {},
+        'recorder_audio': {}
     }
     
     for key, value in session_defaults.items():
@@ -508,41 +554,9 @@ def main():
         <h1>🏛️ CỔNG TIẾP NHẬN PHẢN ÁNH CỘNG ĐỒNG</h1>
         <p>Phản ánh an ninh • Hỏi đáp pháp luật • Ẩn danh hoàn toàn • Giờ Việt Nam: {format_vietnam_time(vietnam_now)}</p>
         <p><small>⚠️ <strong>Chỉ công an mới được bình luận và trả lời câu hỏi</strong></small></p>
+        <p><small>🎤 <strong>Giọng nói dễ dàng với streamlit-mic-recorder</strong></small></p>
     </div>
     """, unsafe_allow_html=True)
-    
-    # ================ XỬ LÝ GIỌNG NÓI ================
-    if st.session_state.get('speech_target'):
-        target = st.session_state.speech_target
-        
-        # Hiển thị trạng thái đang nghe
-        placeholder = st.empty()
-        with placeholder.container():
-            st.warning(f"🎤 Đang chờ phản hồi từ trình duyệt...")
-            st.info("**Trình duyệt sẽ hiện popup hỏi cho phép micro.**")
-            st.markdown("""
-            **Nếu không thấy popup, hãy:**
-            1. Kiểm tra biểu tượng 🔒 trên thanh URL
-            2. Cho phép micro trong cài đặt trình duyệt
-            3. Refresh trang và thử lại
-            """)
-        
-        # Thực hiện nhận diện giọng nói
-        try:
-            text, error = speech_to_text()
-            
-            if text:
-                st.session_state.speech_result = text
-                st.success(f"✅ Đã nhận diện: **{text}**")
-            elif error:
-                st.error(f"❌ {error}")
-                
-        except Exception as e:
-            st.error(f"Lỗi hệ thống: {str(e)}")
-        
-        # Reset target
-        st.session_state.speech_target = None
-        st.rerun()
     
     # Sidebar
     with st.sidebar:
@@ -610,32 +624,29 @@ def main():
         else:
             st.warning("⚠️ SendGrid: Chưa cấu hình")
         
-        if SPEECH_AVAILABLE:
-            st.success("🎤 Nhận diện giọng nói: Sẵn sàng")
+        if MIC_RECORDER_AVAILABLE:
+            st.success("🎤 Ghi âm: Sẵn sàng (streamlit-mic-recorder)")
         else:
-            st.warning("🎤 Nhận diện giọng nói: Chưa cài đặt")
+            st.warning("🎤 Ghi âm: Chưa cài đặt streamlit-mic-recorder")
         
-        # Nút kiểm tra micro - SẼ HỎI POPUP
-        st.markdown("### 🎤 Kiểm tra micro")
-        if st.button("🎤 Kiểm tra Micro", key="test_micro_sidebar", use_container_width=True):
-            if SPEECH_AVAILABLE:
-                st.session_state.speech_target = "test"
-                st.rerun()
-            else:
-                st.error("""
-                **Tính năng giọng nói chưa khả dụng!**
-                
-                Cài đặt thư viện:
-                ```bash
-                pip install SpeechRecognition
-                ```
-                
-                **Trên macOS:**
-                ```bash
-                brew install portaudio
-                pip install pyaudio
-                ```
-                """)
+        if SPEECH_AVAILABLE:
+            st.success("📝 Nhận diện giọng nói: Sẵn sàng")
+        else:
+            st.warning("📝 Nhận diện giọng nói: Cần speech_recognition")
+        
+        # Nút kiểm tra ghi âm
+        st.markdown("### 🎤 Kiểm tra ghi âm")
+        if MIC_RECORDER_AVAILABLE:
+            st.info("Nhấn nút 🎤 trong form để ghi âm")
+        else:
+            st.error("""
+            **Thư viện ghi âm chưa khả dụng!**
+            
+            Cài đặt:
+            ```bash
+            pip install streamlit-mic-recorder
+            ```
+            """)
     
     # Main tabs
     tab1, tab2, tab3 = st.tabs(["📢 PHẢN ÁNH AN NINH", "💬 DIỄN ĐÀN", "ℹ️ THÔNG TIN"])
@@ -651,38 +662,35 @@ def main():
         if not SENDGRID_AVAILABLE:
             st.warning("⚠️ Tính năng email chưa sẵn sàng")
         
-        # ========== NÚT GIỌNG NÓI CHO FORM PHẢN ÁNH ==========
-        st.markdown("### 🎤 Tính năng giọng nói")
-        st.info("Nhấn nút bên dưới để sử dụng giọng nói. **Trình duyệt sẽ hiện popup hỏi cho phép micro.**")
-        
-        col_speech1, col_speech2, col_speech3 = st.columns(3)
-        
-        # Nút 1: Tiêu đề
-        with col_speech1:
-            if st.button("🎤 Tiêu đề bằng giọng nói", key="speech_title_btn", use_container_width=True):
-                if SPEECH_AVAILABLE:
-                    st.session_state.speech_target = "title"
-                    st.rerun()
-                else:
-                    st.error("Tính năng giọng nói chưa khả dụng")
-        
-        # Nút 2: Địa điểm
-        with col_speech2:
-            if st.button("🎤 Địa điểm bằng giọng nói", key="speech_location_btn", use_container_width=True):
-                if SPEECH_AVAILABLE:
-                    st.session_state.speech_target = "location"
-                    st.rerun()
-                else:
-                    st.error("Tính năng giọng nói chưa khả dụng")
-        
-        # Nút 3: Mô tả
-        with col_speech3:
-            if st.button("🎤 Mô tả bằng giọng nói", key="speech_desc_btn", use_container_width=True):
-                if SPEECH_AVAILABLE:
-                    st.session_state.speech_target = "description"
-                    st.rerun()
-                else:
-                    st.error("Tính năng giọng nói chưa khả dụng")
+        # ========== COMPONENT GHI ÂM MỚI ==========
+        if MIC_RECORDER_AVAILABLE:
+            st.markdown("### 🎤 Ghi âm dễ dàng với mic recorder")
+            st.info("""
+            **Cách sử dụng:**
+            1. Nhấn **🎤 Bắt đầu ghi âm** (trình duyệt sẽ hỏi cho phép micro)
+            2. **Nói** nội dung của bạn
+            3. Nhấn **⏹️ Dừng ghi âm** khi hoàn thành
+            4. Nghe lại file ghi âm
+            5. Nhấn **📝 Chuyển thành văn bản** để nhận diện
+            """)
+            
+            # Tạo các recorder component
+            col_rec1, col_rec2, col_rec3 = st.columns(3)
+            
+            with col_rec1:
+                title_text = create_mic_recorder_component("title", "Tiêu đề phản ánh")
+                if title_text:
+                    st.session_state.speech_texts['title'] = title_text
+            
+            with col_rec2:
+                location_text = create_mic_recorder_component("location", "Địa điểm")
+                if location_text:
+                    st.session_state.speech_texts['location'] = location_text
+            
+            with col_rec3:
+                desc_text = create_mic_recorder_component("description", "Mô tả chi tiết")
+                if desc_text:
+                    st.session_state.speech_texts['description'] = desc_text
         
         # FORM PHẢN ÁNH
         with st.form("security_report_form", clear_on_submit=True):
@@ -694,8 +702,9 @@ def main():
                 if title_key not in st.session_state:
                     st.session_state[title_key] = ""
                 
-                if st.session_state.get('speech_target') == 'title' and st.session_state.get('speech_result'):
-                    st.session_state[title_key] = st.session_state.speech_result
+                # Nếu có text từ recorder
+                if 'speech_texts' in st.session_state and 'title' in st.session_state.speech_texts:
+                    st.session_state[title_key] = st.session_state.speech_texts['title']
                 
                 title = st.text_input(
                     "Tiêu đề phản ánh *", 
@@ -709,8 +718,8 @@ def main():
                 if location_key not in st.session_state:
                     st.session_state[location_key] = ""
                 
-                if st.session_state.get('speech_target') == 'location' and st.session_state.get('speech_result'):
-                    st.session_state[location_key] = st.session_state.speech_result
+                if 'speech_texts' in st.session_state and 'location' in st.session_state.speech_texts:
+                    st.session_state[location_key] = st.session_state.speech_texts['location']
                 
                 location = st.text_input(
                     "Địa điểm", 
@@ -731,8 +740,8 @@ def main():
             if desc_key not in st.session_state:
                 st.session_state[desc_key] = ""
             
-            if st.session_state.get('speech_target') == 'description' and st.session_state.get('speech_result'):
-                st.session_state[desc_key] = st.session_state.speech_result
+            if 'speech_texts' in st.session_state and 'description' in st.session_state.speech_texts:
+                st.session_state[desc_key] = st.session_state.speech_texts['description']
             
             description = st.text_area(
                 "Mô tả chi tiết *",
@@ -776,7 +785,10 @@ def main():
                             """, unsafe_allow_html=True)
                         
                         # Xóa kết quả giọng nói sau khi submit
-                        st.session_state.speech_result = None
+                        if 'speech_texts' in st.session_state:
+                            st.session_state.speech_texts = {}
+                        
+                        # Xóa các field
                         st.session_state[title_key] = ""
                         st.session_state[location_key] = ""
                         st.session_state[desc_key] = ""
@@ -796,24 +808,20 @@ def main():
         
         # Nếu đang đặt câu hỏi mới
         if st.session_state.show_new_question:
-            st.markdown("### 🎤 Tính năng giọng nói cho câu hỏi")
-            st.info("Nhấn nút để sử dụng giọng nói. **Trình duyệt sẽ hiện popup hỏi cho phép micro.**")
-            
-            col_q_speech1, col_q_speech2 = st.columns(2)
-            with col_q_speech1:
-                if st.button("🎤 Tiêu đề câu hỏi", key="speech_q_title_btn", use_container_width=True):
-                    if SPEECH_AVAILABLE:
-                        st.session_state.speech_target = "forum_title"
-                        st.rerun()
-                    else:
-                        st.error("Tính năng giọng nói chưa khả dụng")
-            with col_q_speech2:
-                if st.button("🎤 Nội dung câu hỏi", key="speech_q_content_btn", use_container_width=True):
-                    if SPEECH_AVAILABLE:
-                        st.session_state.speech_target = "forum_content"
-                        st.rerun()
-                    else:
-                        st.error("Tính năng giọng nói chưa khả dụng")
+            if MIC_RECORDER_AVAILABLE:
+                st.markdown("### 🎤 Ghi âm cho câu hỏi")
+                
+                col_q1, col_q2 = st.columns(2)
+                
+                with col_q1:
+                    title_text = create_mic_recorder_component("forum_title", "Tiêu đề câu hỏi")
+                    if title_text:
+                        st.session_state.speech_texts['forum_title'] = title_text
+                
+                with col_q2:
+                    content_text = create_mic_recorder_component("forum_content", "Nội dung câu hỏi")
+                    if content_text:
+                        st.session_state.speech_texts['forum_content'] = content_text
         
         # Form đặt câu hỏi mới
         if st.session_state.show_new_question:
@@ -824,8 +832,8 @@ def main():
                     if q_title_key not in st.session_state:
                         st.session_state[q_title_key] = ""
                     
-                    if st.session_state.get('speech_target') == 'forum_title' and st.session_state.get('speech_result'):
-                        st.session_state[q_title_key] = st.session_state.speech_result
+                    if 'speech_texts' in st.session_state and 'forum_title' in st.session_state.speech_texts:
+                        st.session_state[q_title_key] = st.session_state.speech_texts['forum_title']
                     
                     q_title = st.text_input(
                         "Tiêu đề câu hỏi *",
@@ -843,8 +851,8 @@ def main():
                     if q_content_key not in st.session_state:
                         st.session_state[q_content_key] = ""
                     
-                    if st.session_state.get('speech_target') == 'forum_content' and st.session_state.get('speech_result'):
-                        st.session_state[q_content_key] = st.session_state.speech_result
+                    if 'speech_texts' in st.session_state and 'forum_content' in st.session_state.speech_texts:
+                        st.session_state[q_content_key] = st.session_state.speech_texts['forum_content']
                     
                     q_content = st.text_area(
                         "Nội dung chi tiết *",
@@ -871,7 +879,8 @@ def main():
                                 st.success(f"✅ Câu hỏi đã đăng lúc {format_vietnam_time(current_time)}! (ID: {anon_id})")
                                 st.session_state.show_new_question = False
                                 # Xóa kết quả giọng nói
-                                st.session_state.speech_result = None
+                                if 'speech_texts' in st.session_state:
+                                    st.session_state.speech_texts = {}
                                 st.session_state[q_title_key] = ""
                                 st.session_state[q_content_key] = ""
                             else:
@@ -880,7 +889,8 @@ def main():
                     if cancel_q:
                         st.session_state.show_new_question = False
                         # Xóa kết quả giọng nói
-                        st.session_state.speech_result = None
+                        if 'speech_texts' in st.session_state:
+                            st.session_state.speech_texts = {}
         
         # Bộ lọc
         st.markdown("---")
@@ -940,18 +950,15 @@ def main():
                         st.info("Chưa có bình luận nào.")
                     
                     # Form bình luận cho công an
-                    if st.session_state.police_user:
-                        # Nút giọng nói cho bình luận
-                        col_reply_speech, _ = st.columns([1, 3])
-                        with col_reply_speech:
-                            if st.button(f"🎤 Bình luận bằng giọng nói", 
-                                       key=f"speech_reply_btn_{post['id']}",
-                                       use_container_width=True):
-                                if SPEECH_AVAILABLE:
-                                    st.session_state.speech_target = f"reply_{post['id']}"
-                                    st.rerun()
-                                else:
-                                    st.error("Tính năng giọng nói chưa khả dụng")
+                    if st.session_state.police_user and MIC_RECORDER_AVAILABLE:
+                        # Component ghi âm cho bình luận
+                        reply_text = create_mic_recorder_component(
+                            f"reply_{post['id']}", 
+                            f"Bình luận cho: {post['title'][:30]}..."
+                        )
+                        
+                        if reply_text:
+                            st.session_state.speech_texts[f'reply_{post["id"]}'] = reply_text
                         
                         reply_form_key = f"reply_form_{post['id']}"
                         with st.form(reply_form_key, clear_on_submit=True):
@@ -960,10 +967,11 @@ def main():
                             if reply_key not in st.session_state:
                                 st.session_state[reply_key] = ""
                             
-                            # Tự động điền nếu có kết quả giọng nói cho bài này
-                            if (st.session_state.get('speech_target') == f"reply_{post['id']}" and 
-                                st.session_state.get('speech_result')):
-                                st.session_state[reply_key] = st.session_state.speech_result
+                            # Tự động điền nếu có kết quả giọng nói
+                            speech_key = f"reply_{post['id']}"
+                            if ('speech_texts' in st.session_state and 
+                                speech_key in st.session_state.speech_texts):
+                                st.session_state[reply_key] = st.session_state.speech_texts[speech_key]
                             
                             reply_content = st.text_area(
                                 "Bình luận của bạn:",
@@ -993,7 +1001,8 @@ def main():
                                     if result[0]:
                                         st.success(f"✅ Đã gửi trả lời lúc {format_vietnam_time(get_vietnam_time())}!")
                                         # Xóa kết quả giọng nói
-                                        st.session_state.speech_result = None
+                                        if 'speech_texts' in st.session_state:
+                                            st.session_state.speech_texts.pop(speech_key, None)
                                         st.session_state[reply_key] = ""
                                     else:
                                         st.error(f"❌ {result[1]}")
@@ -1028,13 +1037,14 @@ def main():
             st.markdown("""
             ### 📢 **Phản ánh An ninh:**
             1. **Điền thông tin** sự việc
-            2. **Dùng nút giọng nói** nếu cần (trình duyệt sẽ hỏi popup cho phép micro)
+            2. **Dùng ghi âm** để nhập nhanh
             3. **Nhấn GỬI PHẢN ÁNH** để gửi
             
-            ### 🎤 **Hướng dẫn sử dụng micro:**
-            - **Chrome/Firefox:** Click vào biểu tượng 🔒 → cho phép Microphone
-            - **Safari:** Safari → Cài đặt → Trang web → Microphone → Cho phép
-            - **Đã từ chối?** Xóa cache và thử lại
+            ### 🎤 **Cách dùng streamlit-mic-recorder:**
+            - **Dễ dàng:** Chỉ cần nhấn nút ghi âm
+            - **Hỗ trợ mọi trình duyệt:** Chrome, Safari, Firefox
+            - **Mobile tốt:** Hoạt động trên điện thoại
+            - **Nghe lại:** Có thể nghe lại trước khi chuyển text
             """)
         
         with col2:
@@ -1042,32 +1052,37 @@ def main():
             ### 💬 **Diễn đàn:**
             1. **Đặt câu hỏi** ẩn danh
             2. **Chỉ công an** được trả lời
-            3. **Dùng giọng nói** để đặt câu hỏi nhanh
+            3. **Dùng ghi âm** để đặt câu hỏi nhanh
             
             ### 🔒 **Bảo mật:**
             - **Không lưu IP** thực (chỉ hash)
             - **Không đăng ký** tài khoản
             - **Email** được mã hóa
+            - **Audio** chỉ lưu tạm thời
             """)
         
         st.markdown("---")
-        st.markdown("### 🎤 Hướng dẫn sử dụng tính năng giọng nói")
+        st.markdown("### 🎤 Hướng dẫn sử dụng tính năng ghi âm")
         
         st.info("""
-        **Khi nhấn nút giọng nói lần đầu:**
-        1. **Trình duyệt sẽ hiện popup** hỏi: "example.com muốn sử dụng micro của bạn"
-        2. **Chọn "Cho phép"** để kích hoạt tính năng
-        3. **Nói rõ ràng** vào micro khi thấy thông báo "Đang nghe..."
+        **Ưu điểm của streamlit-mic-recorder:**
+        1. **Dễ sử dụng:** Chỉ cần nhấn nút
+        2. **Popup tự động:** Trình duyệt tự hỏi cho phép micro
+        3. **Nghe lại được:** Có thể nghe lại trước khi chuyển text
+        4. **Mobile friendly:** Hoạt động trên iOS Safari, Android Chrome
         
-        **Nếu không thấy popup:**
-        - **Chrome:** Click vào 🔒 trên thanh URL → Site settings → Microphone → Allow
-        - **Safari:** Safari → Preferences → Websites → Microphone → Cho phép
-        - **Firefox:** Click vào biểu tượng camera/micro trên thanh URL → Allow
+        **Cách sử dụng:**
+        1. **Nhấn 🎤 Bắt đầu ghi âm**
+        2. **Cho phép micro** khi trình duyệt hỏi
+        3. **Nói nội dung** của bạn
+        4. **Nhấn ⏹️ Dừng ghi âm** khi xong
+        5. **Nghe lại** nếu cần
+        6. **Nhấn 📝 Chuyển thành văn bản** để nhận diện
         
-        **Lỗi thường gặp:**
-        - **"Micro không khả dụng":** Kiểm tra micro có được kết nối không
-        - **"Không thể nhận diện":** Nói to hơn, rõ ràng hơn
-        - **"Hết thời gian chờ":** Nói trong vòng 10 giây
+        **Lưu ý:**
+        - Cần **speech_recognition** để chuyển audio thành text
+        - File audio **không lưu** trên server
+        - Hỗ trợ **tiếng Việt** tốt
         """)
 
 # ================ CHẠY ỨNG DỤNG ================
