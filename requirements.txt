@@ -5,3 +5,4 @@ sendgrid==6.10.0
 python-dotenv==1.0.0
 SpeechRecognition==3.10.0
 pytz==2025.2
+PyAudio==0.2.14
