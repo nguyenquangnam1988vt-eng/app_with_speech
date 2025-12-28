@@ -171,11 +171,17 @@ st.markdown("""
         padding: 20px;
         border-radius: 10px;
         border: 2px solid #3B82F6;
-        margin: 20px 0;
+        margin: 10px 0;
     }
     .audio-player {
         width: 100%;
         margin: 10px 0;
+    }
+    .recorder-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 15px;
+        margin-bottom: 20px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -223,31 +229,32 @@ def create_mic_recorder_component(key_suffix, label="Ghi âm"):
     if not MIC_RECORDER_AVAILABLE:
         return None
     
-    st.markdown(f"<div class='mic-recorder-container'>", unsafe_allow_html=True)
-    st.markdown(f"### 🎤 {label}")
-    
-    # Hiển thị mic recorder
-    audio = mic_recorder(
-        start_prompt=f"🎤 Bắt đầu ghi âm {label}",
-        stop_prompt="⏹️ Dừng ghi âm",
-        key=f"recorder_{key_suffix}",
-        format="wav"
-    )
-    
-    if audio:
-        st.audio(audio['bytes'], format="audio/wav")
+    with st.container():
+        st.markdown(f"<div class='mic-recorder-container'>", unsafe_allow_html=True)
+        st.markdown(f"### 🎤 {label}")
         
-        # Nút để chuyển thành văn bản
-        if st.button(f"📝 Chuyển thành văn bản ({label})", key=f"convert_{key_suffix}"):
-            with st.spinner("Đang chuyển giọng nói thành văn bản..."):
-                text, error = process_audio_to_text(audio['bytes'])
-                if text:
-                    st.success(f"✅ **Kết quả:** {text}")
-                    return text
-                elif error:
-                    st.error(f"❌ {error}")
-    
-    st.markdown("</div>", unsafe_allow_html=True)
+        # Hiển thị mic recorder
+        audio = mic_recorder(
+            start_prompt=f"🎤 Bắt đầu ghi âm {label}",
+            stop_prompt="⏹️ Dừng ghi âm",
+            key=f"recorder_{key_suffix}",
+            format="wav"
+        )
+        
+        if audio:
+            st.audio(audio['bytes'], format="audio/wav")
+            
+            # Nút để chuyển thành văn bản
+            if st.button(f"📝 Chuyển thành văn bản ({label})", key=f"convert_{key_suffix}"):
+                with st.spinner("Đang chuyển giọng nói thành văn bản..."):
+                    text, error = process_audio_to_text(audio['bytes'])
+                    if text:
+                        st.success(f"✅ **Kết quả:** {text}")
+                        return text
+                    elif error:
+                        st.error(f"❌ {error}")
+        
+        st.markdown("</div>", unsafe_allow_html=True)
     return None
 
 # ================ HIỂN THỊ GIỜ VIỆT NAM ================
@@ -536,16 +543,12 @@ def main():
     init_database()
     
     # Khởi tạo session state
-    session_defaults = {
-        'police_user': None,
-        'show_new_question': False,
-        'speech_texts': {},
-        'recorder_audio': {}
-    }
-    
-    for key, value in session_defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
+    if 'police_user' not in st.session_state:
+        st.session_state.police_user = None
+    if 'show_new_question' not in st.session_state:
+        st.session_state.show_new_question = False
+    if 'speech_texts' not in st.session_state:
+        st.session_state.speech_texts = {}
     
     # Header với thời gian VN
     vietnam_now = get_vietnam_time()
@@ -674,23 +677,27 @@ def main():
             5. Nhấn **📝 Chuyển thành văn bản** để nhận diện
             """)
             
-            # Tạo các recorder component
-            col_rec1, col_rec2, col_rec3 = st.columns(3)
+            # Tạo các recorder component dạng grid
+            st.markdown('<div class="recorder-grid">', unsafe_allow_html=True)
             
-            with col_rec1:
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
                 title_text = create_mic_recorder_component("title", "Tiêu đề phản ánh")
                 if title_text:
                     st.session_state.speech_texts['title'] = title_text
             
-            with col_rec2:
+            with col2:
                 location_text = create_mic_recorder_component("location", "Địa điểm")
                 if location_text:
                     st.session_state.speech_texts['location'] = location_text
             
-            with col_rec3:
+            with col3:
                 desc_text = create_mic_recorder_component("description", "Mô tả chi tiết")
                 if desc_text:
                     st.session_state.speech_texts['description'] = desc_text
+            
+            st.markdown('</div>', unsafe_allow_html=True)
         
         # FORM PHẢN ÁNH
         with st.form("security_report_form", clear_on_submit=True):
@@ -698,34 +705,27 @@ def main():
             
             with col1:
                 # Tiêu đề - tự động điền từ giọng nói nếu có
-                title_key = "report_title_input"
-                if title_key not in st.session_state:
-                    st.session_state[title_key] = ""
-                
-                # Nếu có text từ recorder
+                title_placeholder = ""
                 if 'speech_texts' in st.session_state and 'title' in st.session_state.speech_texts:
-                    st.session_state[title_key] = st.session_state.speech_texts['title']
+                    title_placeholder = st.session_state.speech_texts['title']
                 
                 title = st.text_input(
                     "Tiêu đề phản ánh *", 
                     placeholder="Ví dụ: Mất trộm xe máy tại...",
-                    value=st.session_state[title_key],
-                    key=title_key
+                    value=title_placeholder,
+                    key="report_title"
                 )
                 
                 # Địa điểm
-                location_key = "report_location_input"
-                if location_key not in st.session_state:
-                    st.session_state[location_key] = ""
-                
+                location_placeholder = ""
                 if 'speech_texts' in st.session_state and 'location' in st.session_state.speech_texts:
-                    st.session_state[location_key] = st.session_state.speech_texts['location']
+                    location_placeholder = st.session_state.speech_texts['location']
                 
                 location = st.text_input(
                     "Địa điểm", 
                     placeholder="Số nhà, đường, phường/xã...",
-                    value=st.session_state[location_key],
-                    key=location_key
+                    value=location_placeholder,
+                    key="report_location"
                 )
             
             with col2:
@@ -736,19 +736,16 @@ def main():
                 )
             
             # Mô tả
-            desc_key = "report_description_input"
-            if desc_key not in st.session_state:
-                st.session_state[desc_key] = ""
-            
+            desc_placeholder = ""
             if 'speech_texts' in st.session_state and 'description' in st.session_state.speech_texts:
-                st.session_state[desc_key] = st.session_state.speech_texts['description']
+                desc_placeholder = st.session_state.speech_texts['description']
             
             description = st.text_area(
                 "Mô tả chi tiết *",
                 height=150,
                 placeholder="Mô tả đầy đủ sự việc, đối tượng, phương tiện, thiệt hại...",
-                value=st.session_state[desc_key],
-                key=desc_key
+                value=desc_placeholder,
+                key="report_description"
             )
             
             # Nút submit
@@ -785,13 +782,12 @@ def main():
                             """, unsafe_allow_html=True)
                         
                         # Xóa kết quả giọng nói sau khi submit
-                        if 'speech_texts' in st.session_state:
-                            st.session_state.speech_texts = {}
-                        
-                        # Xóa các field
-                        st.session_state[title_key] = ""
-                        st.session_state[location_key] = ""
-                        st.session_state[desc_key] = ""
+                        st.session_state.speech_texts = {}
+                        # Xóa các field thông qua session state
+                        st.session_state.report_title = ""
+                        st.session_state.report_location = ""
+                        st.session_state.report_description = ""
+                        st.session_state.report_time = ""
                     else:
                         st.error("❌ Lỗi lưu phản ánh. Vui lòng thử lại!")
     
@@ -828,18 +824,15 @@ def main():
             with st.expander("✍️ ĐẶT CÂU HỎI MỚI", expanded=True):
                 with st.form("new_question_form", clear_on_submit=True):
                     # Tiêu đề câu hỏi
-                    q_title_key = "q_title_input"
-                    if q_title_key not in st.session_state:
-                        st.session_state[q_title_key] = ""
-                    
+                    q_title_placeholder = ""
                     if 'speech_texts' in st.session_state and 'forum_title' in st.session_state.speech_texts:
-                        st.session_state[q_title_key] = st.session_state.speech_texts['forum_title']
+                        q_title_placeholder = st.session_state.speech_texts['forum_title']
                     
                     q_title = st.text_input(
                         "Tiêu đề câu hỏi *",
                         placeholder="Nhập tiêu đề câu hỏi",
-                        value=st.session_state[q_title_key],
-                        key=q_title_key
+                        value=q_title_placeholder,
+                        key="q_title_input"
                     )
                     
                     q_category = st.selectbox("Chủ đề *", 
@@ -847,19 +840,16 @@ def main():
                                              "Tư vấn thủ tục", "An ninh trật tự", "Khác"])
                     
                     # Nội dung câu hỏi
-                    q_content_key = "q_content_input"
-                    if q_content_key not in st.session_state:
-                        st.session_state[q_content_key] = ""
-                    
+                    q_content_placeholder = ""
                     if 'speech_texts' in st.session_state and 'forum_content' in st.session_state.speech_texts:
-                        st.session_state[q_content_key] = st.session_state.speech_texts['forum_content']
+                        q_content_placeholder = st.session_state.speech_texts['forum_content']
                     
                     q_content = st.text_area(
                         "Nội dung chi tiết *",
                         height=150,
                         placeholder="Mô tả rõ vấn đề bạn đang gặp phải...",
-                        value=st.session_state[q_content_key],
-                        key=q_content_key
+                        value=q_content_placeholder,
+                        key="q_content_input"
                     )
                     
                     # Nút submit
@@ -879,18 +869,14 @@ def main():
                                 st.success(f"✅ Câu hỏi đã đăng lúc {format_vietnam_time(current_time)}! (ID: {anon_id})")
                                 st.session_state.show_new_question = False
                                 # Xóa kết quả giọng nói
-                                if 'speech_texts' in st.session_state:
-                                    st.session_state.speech_texts = {}
-                                st.session_state[q_title_key] = ""
-                                st.session_state[q_content_key] = ""
+                                st.session_state.speech_texts = {}
                             else:
                                 st.error(f"❌ {error}")
                     
                     if cancel_q:
                         st.session_state.show_new_question = False
                         # Xóa kết quả giọng nói
-                        if 'speech_texts' in st.session_state:
-                            st.session_state.speech_texts = {}
+                        st.session_state.speech_texts = {}
         
         # Bộ lọc
         st.markdown("---")
@@ -963,22 +949,17 @@ def main():
                         reply_form_key = f"reply_form_{post['id']}"
                         with st.form(reply_form_key, clear_on_submit=True):
                             # Nội dung bình luận
-                            reply_key = f"reply_input_{post['id']}"
-                            if reply_key not in st.session_state:
-                                st.session_state[reply_key] = ""
-                            
-                            # Tự động điền nếu có kết quả giọng nói
-                            speech_key = f"reply_{post['id']}"
-                            if ('speech_texts' in st.session_state and 
-                                speech_key in st.session_state.speech_texts):
-                                st.session_state[reply_key] = st.session_state.speech_texts[speech_key]
+                            reply_key = f"reply_{post['id']}"
+                            reply_placeholder = ""
+                            if 'speech_texts' in st.session_state and reply_key in st.session_state.speech_texts:
+                                reply_placeholder = st.session_state.speech_texts[reply_key]
                             
                             reply_content = st.text_area(
                                 "Bình luận của bạn:",
                                 height=80,
                                 placeholder="Viết câu trả lời hoặc ý kiến...",
-                                value=st.session_state[reply_key],
-                                key=reply_key
+                                value=reply_placeholder,
+                                key=f"reply_input_{post['id']}"
                             )
                             
                             # Nút submit
@@ -1001,9 +982,8 @@ def main():
                                     if result[0]:
                                         st.success(f"✅ Đã gửi trả lời lúc {format_vietnam_time(get_vietnam_time())}!")
                                         # Xóa kết quả giọng nói
-                                        if 'speech_texts' in st.session_state:
-                                            st.session_state.speech_texts.pop(speech_key, None)
-                                        st.session_state[reply_key] = ""
+                                        if reply_key in st.session_state.speech_texts:
+                                            del st.session_state.speech_texts[reply_key]
                                     else:
                                         st.error(f"❌ {result[1]}")
                     else:
