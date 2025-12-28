@@ -207,17 +207,20 @@ def speech_to_text(language='vi-VN'):
         return None, f"Lỗi: {str(e)[:100]}"
 
 # ================ COMPONENT NHẬP LIỆU CÓ GIỌNG NÓI ================
+# SỬA PHẦN NÀY:
 def text_input_with_speech(label, key, placeholder="", height=None, help_text=""):
     """Text input với nút nhập bằng giọng nói"""
     col1, col2 = st.columns([5, 1])
     
     with col1:
         if height:
+            # SỬA: thay help_text thành help
             text = st.text_area(label, placeholder=placeholder, height=height, 
-                              key=key, help_text=help_text)
+                              key=key, help=help_text)  # ĐỔI help_text thành help
         else:
+            # SỬA: thay help_text thành help
             text = st.text_input(label, placeholder=placeholder, 
-                               key=key, help_text=help_text)
+                               key=key, help=help_text)  # ĐỔI help_text thành help
     
     with col2:
         speech_key = f"speech_{key}"
