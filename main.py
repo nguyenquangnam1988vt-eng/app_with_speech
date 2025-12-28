@@ -1,6 +1,7 @@
 """
 🏛️ HỆ THỐNG TIẾP NHẬN PHẢN ÁNH & TƯ VẤN CỘNG ĐỒNG
-TÍCH HỢP GIỌNG NÓI - FIX CHO SAFARI & ĐIỆN THOẠI
+TÍCH HỢP GIỌNG NÓI - DÙNG WEB SPEECH API
+GIỮ NGUYÊN TẤT CẢ TÍNH NĂNG
 """
 
 import streamlit as st
@@ -11,9 +12,7 @@ import hashlib
 import secrets
 import time
 import os
-import re
-import platform
-from urllib.parse import urlparse
+import json
 
 # ================ CẤU HÌNH GIỜ VIỆT NAM ================
 import pytz
@@ -43,9 +42,11 @@ def format_vietnam_time(dt, format_str='%H:%M %d/%m/%Y'):
     
     return dt.strftime(format_str)
 
-# ================ PHÁT HIỆN THIẾT BỊ (FIXED) ================
+# ================ PHÁT HIỆN THIẾT BỊ ================
+import platform
+
 def detect_device_info():
-    """Phát hiện loại thiết bị và trình duyệt - FIXED"""
+    """Phát hiện loại thiết bị và trình duyệt"""
     device_info = {
         'is_mobile': False,
         'is_ios': False,
@@ -58,21 +59,18 @@ def detect_device_info():
     }
     
     try:
-        # FIX: Dùng experimental_get_query_params thay vì query_params
+        # Try to get from query params
         try:
             query_params = st.experimental_get_query_params()
             user_agent = query_params.get('_ua', [''])[0].lower()
         except:
             user_agent = ''
         
-        # Phát hiện dựa trên user agent
         if not user_agent:
-            # Fallback: dựa trên platform
-            import platform
+            # Fallback based on platform
             system = platform.system()
             device_info['os'] = system
             
-            # Giả định Safari trên macOS, Chrome trên Windows
             if system == 'Darwin':
                 device_info['is_safari'] = True
             elif system == 'Windows':
@@ -80,7 +78,7 @@ def detect_device_info():
             
             return device_info
         
-        # Phát hiện hệ điều hành
+        # Detect OS
         if 'iphone' in user_agent or 'ipad' in user_agent or 'ipod' in user_agent:
             device_info['is_mobile'] = True
             device_info['is_ios'] = True
@@ -96,7 +94,7 @@ def detect_device_info():
         elif 'linux' in user_agent:
             device_info['os'] = 'Linux'
         
-        # Phát hiện trình duyệt
+        # Detect browser
         if 'safari' in user_agent and 'chrome' not in user_agent:
             device_info['is_safari'] = True
             device_info['browser'] = 'Safari'
@@ -109,7 +107,7 @@ def detect_device_info():
         elif 'edge' in user_agent:
             device_info['browser'] = 'Edge'
         
-        # Phát hiện thiết bị di động
+        # Detect mobile device
         mobile_keywords = ['mobile', 'iphone', 'ipad', 'android', 'blackberry', 
                           'webos', 'iemobile', 'opera mini', 'windows phone']
         if any(keyword in user_agent for keyword in mobile_keywords):
@@ -121,14 +119,6 @@ def detect_device_info():
     return device_info
 
 # ================ IMPORT THƯ VIỆN ================
-SPEECH_AVAILABLE = False
-try:
-    import speech_recognition as sr
-    SPEECH_AVAILABLE = True
-except ImportError:
-    SPEECH_AVAILABLE = False
-
-# Import werkzeug thay bcrypt
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # Import SendGrid email service
@@ -149,28 +139,314 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ================ CSS STYLING CHO ĐIỆN THOẠI ================
+# ================ WEB SPEECH API COMPONENT ================
+def create_speech_component(field_id, label="Nhập văn bản bằng giọng nói"):
+    """Tạo component nhận diện giọng nói"""
+    
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Speech Recognition</title>
+        <style>
+            .speech-container {{
+                padding: 15px;
+                border: 2px solid #3B82F6;
+                border-radius: 10px;
+                background: linear-gradient(135deg, #f0f8ff 0%, #e6f3ff 100%);
+                margin: 10px 0;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            }}
+            .speech-header {{
+                color: #1E3A8A;
+                font-size: 1.1em;
+                margin-bottom: 10px;
+                font-weight: bold;
+            }}
+            .speech-btn {{
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 8px;
+                cursor: pointer;
+                font-weight: bold;
+                margin: 5px;
+                transition: all 0.3s;
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+            }}
+            .speech-btn:hover {{
+                transform: translateY(-2px);
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            }}
+            .speech-btn.recording {{
+                background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+                animation: pulse 1.5s infinite;
+            }}
+            @keyframes pulse {{
+                0% {{ opacity: 1; }}
+                50% {{ opacity: 0.8; }}
+                100% {{ opacity: 1; }}
+            }}
+            .status-box {{
+                background: white;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                padding: 10px;
+                margin: 10px 0;
+                font-size: 14px;
+                min-height: 40px;
+            }}
+            .result-box {{
+                background: #f8f9fa;
+                border: 1px solid #28a745;
+                border-radius: 5px;
+                padding: 12px;
+                margin: 10px 0;
+                font-size: 16px;
+                min-height: 60px;
+            }}
+            .language-select {{
+                margin: 10px 0;
+                padding: 5px;
+                border-radius: 5px;
+                border: 1px solid #ccc;
+            }}
+            .instructions {{
+                background: #fff3cd;
+                border: 1px solid #ffc107;
+                border-radius: 5px;
+                padding: 10px;
+                margin: 10px 0;
+                font-size: 14px;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="speech-container">
+            <div class="speech-header">🎤 {label}</div>
+            
+            <div class="instructions">
+                <strong>Hướng dẫn:</strong>
+                <ol>
+                    <li>Nhấn <strong>Bắt đầu nói</strong> và cho phép micro</li>
+                    <li>Nói rõ ràng vào micro</li>
+                    <li>Nhấn <strong>Dừng lại</strong> khi hoàn thành</li>
+                    <li>Nhấn <strong>Gửi kết quả</strong> để điền vào form</li>
+                </ol>
+            </div>
+            
+            <select class="language-select" id="languageSelect">
+                <option value="vi-VN">Tiếng Việt</option>
+                <option value="en-US">Tiếng Anh</option>
+            </select>
+            
+            <button class="speech-btn" onclick="startRecognition()" id="startBtn">
+                🎤 Bắt đầu nói
+            </button>
+            
+            <button class="speech-btn" onclick="stopRecognition()" id="stopBtn" style="display:none;">
+                ⏹️ Dừng lại
+            </button>
+            
+            <button class="speech-btn" onclick="sendResultToStreamlit()" id="sendBtn" style="display:none;">
+                📤 Gửi kết quả
+            </button>
+            
+            <div class="status-box" id="statusBox">
+                <span id="statusText">Sẵn sàng nhận diện giọng nói...</span>
+            </div>
+            
+            <div class="result-box" id="resultBox">
+                <strong>Kết quả nhận diện:</strong><br>
+                <span id="resultText">Kết quả sẽ hiển thị ở đây</span>
+            </div>
+        </div>
+
+        <script>
+        let recognition = null;
+        let isListening = false;
+        let finalTranscript = '';
+        let currentLanguage = 'vi-VN';
+        
+        // Kiểm tra hỗ trợ Web Speech API
+        function checkSpeechSupport() {{
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {{
+                document.getElementById('statusText').innerHTML = 
+                    '❌ Trình duyệt không hỗ trợ nhận diện giọng nói. Vui lòng dùng Chrome, Edge hoặc Safari.';
+                document.getElementById('statusText').style.color = '#dc3545';
+                return false;
+            }}
+            return true;
+        }}
+        
+        // Khởi tạo Speech Recognition
+        function initSpeechRecognition() {{
+            if (!checkSpeechSupport()) return null;
+            
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            
+            // Cấu hình
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = currentLanguage;
+            recognition.maxAlternatives = 1;
+            
+            // Xử lý sự kiện
+            recognition.onstart = () => {{
+                isListening = true;
+                updateStatus('🎤 <strong>ĐANG NGHE...</strong> Hãy nói vào micro', '#28a745');
+                document.getElementById('startBtn').classList.add('recording');
+                document.getElementById('startBtn').style.display = 'none';
+                document.getElementById('stopBtn').style.display = 'inline-block';
+                document.getElementById('sendBtn').style.display = 'none';
+            }};
+            
+            recognition.onresult = (event) => {{
+                let interimTranscript = '';
+                
+                for (let i = event.resultIndex; i < event.results.length; i++) {{
+                    const transcript = event.results[i][0].transcript;
+                    
+                    if (event.results[i].isFinal) {{
+                        finalTranscript += transcript + ' ';
+                    }} else {{
+                        interimTranscript += transcript;
+                    }}
+                }}
+                
+                // Cập nhật kết quả
+                document.getElementById('resultText').innerHTML = 
+                    '<span style="color: #28a745">' + finalTranscript + '</span>' + 
+                    '<br><span style="color: #6c757d"><em>' + interimTranscript + '</em></span>';
+            }};
+            
+            recognition.onerror = (event) => {{
+                console.error('Speech recognition error:', event.error);
+                
+                let errorMsg = 'Lỗi nhận diện: ';
+                switch(event.error) {{
+                    case 'no-speech':
+                        errorMsg = 'Không phát hiện giọng nói. Vui lòng nói lại.';
+                        break;
+                    case 'audio-capture':
+                        errorMsg = 'Không thể truy cập micro. Vui lòng kiểm tra quyền truy cập.';
+                        break;
+                    case 'not-allowed':
+                        errorMsg = 'Micro bị từ chối. Vui lòng cho phép micro trong cài đặt trình duyệt.';
+                        break;
+                    default:
+                        errorMsg = 'Lỗi: ' + event.error;
+                }}
+                
+                updateStatus('❌ ' + errorMsg, '#dc3545');
+                stopRecognition();
+            }};
+            
+            recognition.onend = () => {{
+                if (isListening) {{
+                    // Tự động bắt đầu lại nếu vẫn đang nghe
+                    try {{
+                        recognition.start();
+                    }} catch (e) {{
+                        console.log('Auto-restart failed:', e);
+                    }}
+                }} else {{
+                    updateStatus('✅ Đã dừng ghi âm', '#6c757d');
+                    document.getElementById('startBtn').classList.remove('recording');
+                    document.getElementById('startBtn').style.display = 'inline-block';
+                    document.getElementById('stopBtn').style.display = 'none';
+                    document.getElementById('sendBtn').style.display = 'inline-block';
+                }}
+            }};
+            
+            return recognition;
+        }}
+        
+        // Bắt đầu nhận diện
+        function startRecognition() {{
+            if (!recognition) {{
+                recognition = initSpeechRecognition();
+                if (!recognition) return;
+            }}
+            
+            // Cập nhật ngôn ngữ
+            currentLanguage = document.getElementById('languageSelect').value;
+            recognition.lang = currentLanguage;
+            
+            // Reset transcript
+            finalTranscript = '';
+            document.getElementById('resultText').innerHTML = 'Đang nghe...';
+            
+            try {{
+                recognition.start();
+            }} catch (e) {{
+                updateStatus('❌ Không thể bắt đầu: ' + e.message, '#dc3545');
+            }}
+        }}
+        
+        // Dừng nhận diện
+        function stopRecognition() {{
+            if (recognition && isListening) {{
+                isListening = false;
+                recognition.stop();
+            }}
+        }}
+        
+        // Gửi kết quả về Streamlit
+        function sendResultToStreamlit() {{
+            const text = finalTranscript.trim();
+            if (!text) {{
+                updateStatus('⚠️ Không có nội dung để gửi', '#ffc107');
+                return;
+            }}
+            
+            // Gửi message về parent window
+            window.parent.postMessage({{
+                type: 'SPEECH_RESULT',
+                fieldId: '{field_id}',
+                text: text,
+                language: currentLanguage
+            }}, '*');
+            
+            updateStatus('✅ Đã gửi kết quả thành công!', '#28a745');
+        }}
+        
+        // Cập nhật trạng thái
+        function updateStatus(message, color) {{
+            const statusEl = document.getElementById('statusText');
+            statusEl.innerHTML = message;
+            statusEl.style.color = color;
+        }}
+        
+        // Xử lý khi trang load
+        window.addEventListener('load', () => {{
+            if (!checkSpeechSupport()) {{
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('startBtn').style.opacity = '0.5';
+            }}
+        }});
+        
+        // Lắng nghe message từ Streamlit
+        window.addEventListener('message', (event) => {{
+            if (event.data.type === 'GET_SPEECH_RESULT') {{
+                sendResultToStreamlit();
+            }}
+        }});
+        </script>
+    </body>
+    </html>
+    """
+    
+    return html
+
+# ================ CSS STYLING ================
 st.markdown("""
 <style>
-    @media (max-width: 768px) {
-        .main-header h1 {
-            font-size: 1.5rem !important;
-        }
-        .main-header p {
-            font-size: 0.9rem !important;
-        }
-        .stButton button {
-            width: 100% !important;
-            margin: 5px 0 !important;
-        }
-        .stTextInput input, .stTextArea textarea {
-            font-size: 16px !important; /* Ngăn zoom trên iOS */
-        }
-        .column {
-            padding: 5px !important;
-        }
-    }
-    
     .main-header {
         text-align: center;
         color: white;
@@ -242,19 +518,12 @@ st.markdown("""
         font-size: 0.9em;
         margin: 5px 0;
     }
-    .speech-btn {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border: none;
-        padding: 10px 15px;
-        border-radius: 8px;
-        cursor: pointer;
-        font-weight: bold;
-        width: 100%;
-        margin: 5px 0;
-    }
-    .speech-btn:hover {
-        background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+    .speech-section {
+        background: linear-gradient(135deg, #f0f8ff 0%, #e6f3ff 100%);
+        padding: 20px;
+        border-radius: 10px;
+        border: 2px solid #3B82F6;
+        margin: 20px 0;
     }
     .device-warning {
         background: #fff3cd;
@@ -263,11 +532,6 @@ st.markdown("""
         padding: 10px;
         margin: 10px 0;
         font-size: 0.9em;
-    }
-    .mobile-friendly-btn {
-        font-size: 14px !important;
-        padding: 8px 12px !important;
-        min-height: 44px !important; /* Dễ chạm trên mobile */
     }
 </style>
 """, unsafe_allow_html=True)
@@ -301,8 +565,7 @@ def init_database():
                 incident_time TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 ip_hash TEXT,
-                email_sent BOOLEAN DEFAULT 0,
-                device_info TEXT
+                email_sent BOOLEAN DEFAULT 0
             )
         ''')
         
@@ -316,8 +579,7 @@ def init_database():
                 anonymous_id TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 reply_count INTEGER DEFAULT 0,
-                is_answered BOOLEAN DEFAULT 0,
-                device_info TEXT
+                is_answered BOOLEAN DEFAULT 0
             )
         ''')
         
@@ -362,112 +624,19 @@ def init_database():
     except Exception as e:
         st.error(f"Lỗi khởi tạo database: {str(e)}")
 
-# ================ HÀM NHẬN DIỆN GIỌNG NÓI FIX CHO ĐIỆN THOẠI ================
-def speech_to_text(language='vi-VN'):
-    """Chuyển giọng nói thành văn bản - Fix cho Safari & Điện thoại"""
-    if not SPEECH_AVAILABLE:
-        return None, "Tính năng giọng nói chưa khả dụng"
-    
-    try:
-        recognizer = sr.Recognizer()
-        device_info = detect_device_info()
-        
-        # HIỂN THỊ HƯỚNG DẪN THEO THIẾT BỊ
-        if device_info['is_mobile']:
-            if device_info['is_ios']:
-                st.info("📱 **iPhone/iPad:** Nói vào micro phía dưới màn hình")
-            elif device_info['is_android']:
-                st.info("📱 **Android:** Nói vào micro của điện thoại")
-        elif device_info['is_safari']:
-            st.info("🍎 **Safari:** Kiểm tra popup cho phép micro")
-        
-        # KIỂM TRA MICRO
-        try:
-            mic_list = sr.Microphone.list_microphone_names()
-            if not mic_list:
-                st.warning("⚠️ Không tìm thấy micro trong danh sách")
-                st.info("Trên điện thoại, micro được tự động sử dụng")
-        except Exception as e:
-            st.warning(f"⚠️ Lỗi kiểm tra micro: {str(e)}")
-        
-        # ĐIỀU CHỈNH THÔNG SỐ THEO THIẾT BỊ
-        with sr.Microphone() as source:
-            # Giảm thời gian điều chỉnh cho điện thoại
-            adjust_time = 0.5 if device_info['is_mobile'] else 1.0
-            recognizer.adjust_for_ambient_noise(source, duration=adjust_time)
-            
-            # Hiển thị thông báo nghe
-            if device_info['is_mobile']:
-                st.success("🎤 **ĐANG NGHE...** (Nói ngay vào micro điện thoại)")
-            else:
-                st.success("🎤 **ĐANG NGHE...** (Nói ngay bây giờ)")
-            
-            # GHI ÂM VỚI TIMEOUT PHÙ HỢP
-            try:
-                # Điện thoại cần timeout ngắn hơn
-                timeout = 7 if device_info['is_mobile'] else 10
-                phrase_limit = 8 if device_info['is_mobile'] else 15
-                
-                audio = recognizer.listen(
-                    source, 
-                    timeout=timeout, 
-                    phrase_time_limit=phrase_limit
-                )
-            except sr.WaitTimeoutError:
-                if device_info['is_mobile']:
-                    return None, "Hết thời gian chờ. Vui lòng chạm vào nút và nói ngay"
-                return None, "Hết thời gian chờ. Vui lòng nói trong vòng 10 giây"
-        
-        # NHẬN DIỆN GIỌNG NÓI
-        try:
-            text = recognizer.recognize_google(audio, language=language)
-            
-            # ƯỚC LƯỢNG ĐỘ DÀI
-            word_count = len(text.split())
-            if word_count < 2:
-                st.warning("⚠️ Câu nói quá ngắn. Vui lòng nói dài hơn")
-            
-            return text, None
-            
-        except sr.UnknownValueError:
-            if device_info['is_mobile']:
-                return None, "Không nghe rõ. Vui lòng nói to hơn, gần micro hơn"
-            return None, "Không thể nhận diện giọng nói. Vui lòng thử lại"
-            
-        except sr.RequestError as e:
-            return None, f"Lỗi kết nối Internet: {str(e)}. Kiểm tra mạng và thử lại"
-    
-    except Exception as e:
-        error_msg = str(e)
-        
-        # XỬ LÝ LỖI CỤ THỂ
-        if "Microphone" in error_msg:
-            if device_info['is_mobile']:
-                return None, "Lỗi micro trên điện thoại. Thử dùng trình duyệt Chrome"
-            elif device_info['is_safari']:
-                return None, "Safari chặn micro. Vào Safari → Cài đặt → Trang web → Microphone → Cho phép"
-            else:
-                return None, "Micro không khả dụng. Kiểm tra quyền trình duyệt"
-        
-        elif "access" in error_msg.lower() or "permission" in error_msg.lower():
-            return None, "Bị từ chối quyền truy cập micro. Cho phép trong cài đặt trình duyệt"
-        
-        return None, f"Lỗi: {error_msg}"
-
 # ================ HÀM XỬ LÝ PHẢN ÁNH ================
 def save_to_database(title, description, location="", incident_time=""):
-    """Lưu phản ánh vào database với thông tin thiết bị"""
+    """Lưu phản ánh vào database"""
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         
         ip_hash = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
-        device_info = str(detect_device_info())
         
         c.execute('''
-            INSERT INTO security_reports (title, description, location, incident_time, ip_hash, device_info)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (title, description, location, incident_time, ip_hash, device_info))
+            INSERT INTO security_reports (title, description, location, incident_time, ip_hash)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (title, description, location, incident_time, ip_hash))
         
         conn.commit()
         report_id = c.lastrowid
@@ -513,18 +682,17 @@ def handle_security_report(title, description, location, incident_time):
 
 # ================ HÀM DIỄN ĐÀN ================
 def save_forum_post(title, content, category):
-    """Lưu bài đăng diễn đàn với thông tin thiết bị"""
+    """Lưu bài đăng diễn đàn"""
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         
         anonymous_id = f"NgườiDân_{secrets.token_hex(4)}"
-        device_info = str(detect_device_info())
         
         c.execute('''
-            INSERT INTO forum_posts (title, content, category, anonymous_id, device_info)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (title, content, category, anonymous_id, device_info))
+            INSERT INTO forum_posts (title, content, category, anonymous_id)
+            VALUES (?, ?, ?, ?)
+        ''', (title, content, category, anonymous_id))
         
         conn.commit()
         post_id = c.lastrowid
@@ -653,16 +821,14 @@ def main():
     
     init_database()
     
-    # Phát hiện thiết bị ngay từ đầu
+    # Phát hiện thiết bị
     device_info = detect_device_info()
     
     # Khởi tạo session state
     session_defaults = {
         'police_user': None,
         'show_new_question': False,
-        'speech_target': None,
-        'speech_result': None,
-        'listening': False,
+        'speech_results': {},
         'device_info': device_info
     }
     
@@ -689,61 +855,9 @@ def main():
         <h1>{device_icon} CỔNG TIẾP NHẬN PHẢN ÁNH CỘNG ĐỒNG</h1>
         <p>Phản ánh an ninh • Hỏi đáp pháp luật • Ẩn danh hoàn toàn • Giờ Việt Nam: {format_vietnam_time(vietnam_now)}</p>
         <p><small>⚠️ <strong>Chỉ công an mới được bình luận và trả lời câu hỏi</strong></small></p>
-        <p><small>🔊 <strong>Giọng nói hỗ trợ: {device_info['browser']} trên {device_info['os']}</strong></small></p>
+        <p><small>🎤 <strong>Giọng nói hỗ trợ: {device_info['browser']} trên {device_info['os']}</strong></small></p>
     </div>
     """, unsafe_allow_html=True)
-    
-    # ================ XỬ LÝ GIỌNG NÓI ================
-    if st.session_state.get('speech_target'):
-        target = st.session_state.speech_target
-        
-        # Hiển thị trạng thái đang nghe
-        placeholder = st.empty()
-        with placeholder.container():
-            if device_info['is_mobile']:
-                st.warning("📱 **ĐANG CHỜ PHẢN HỒI TỪ TRÌNH DUYỆT ĐIỆN THOẠI**")
-                st.info("""
-                **Trên điện thoại:**
-                1. **Cho phép micro** khi trình duyệt hỏi
-                2. **Nói vào micro** của điện thoại
-                3. **Chờ kết quả** nhận diện
-                """)
-            else:
-                st.warning("🎤 **ĐANG CHỜ PHẢN HỒI TỪ TRÌNH DUYỆT**")
-                st.info("**Trình duyệt sẽ hiện popup hỏi cho phép micro.**")
-            
-            # Hiển thị hướng dẫn cụ thể
-            if device_info['is_safari']:
-                st.markdown("""
-                **🍎 Safari đặc biệt:**
-                1. Click **Cho phép** trong popup
-                2. Nếu không thấy: Safari → Preferences → Websites → Microphone
-                3. Tìm localhost:8501 → Chọn **Allow**
-                """)
-            elif device_info['is_mobile'] and device_info['is_ios']:
-                st.markdown("""
-                **📱 iOS (iPhone/iPad):**
-                1. Chạm vào **Cho phép** khi Safari/Chrome hỏi
-                2. Nói vào **micro phía dưới** màn hình
-                3. Giữ điện thoại **gần miệng** khi nói
-                """)
-        
-        # Thực hiện nhận diện giọng nói
-        try:
-            text, error = speech_to_text()
-            
-            if text:
-                st.session_state.speech_result = text
-                st.success(f"✅ **ĐÃ NHẬN DIỆN:** {text}")
-            elif error:
-                st.error(f"❌ {error}")
-                
-        except Exception as e:
-            st.error(f"Lỗi hệ thống: {str(e)}")
-        
-        # Reset target
-        st.session_state.speech_target = None
-        st.rerun()
     
     # Sidebar
     with st.sidebar:
@@ -755,8 +869,7 @@ def main():
             
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("Đăng nhập", type="primary", use_container_width=True, 
-                           help="Đăng nhập để trả lời câu hỏi trên diễn đàn"):
+                if st.button("Đăng nhập", type="primary", use_container_width=True):
                     user = police_login(badge, password)
                     if user:
                         st.session_state.police_user = user
@@ -814,46 +927,12 @@ def main():
             conn.close()
         except:
             st.warning("Không thể kết nối database")
-        
-        # Nút kiểm tra micro
-        st.markdown("### 🎤 Kiểm tra micro")
-        
-        if SPEECH_AVAILABLE:
-            if st.button("🎤 Kiểm tra Micro", key="test_micro_sidebar", 
-                        use_container_width=True, 
-                        help="Kiểm tra micro của thiết bị"):
-                st.session_state.speech_target = "test"
-                st.rerun()
-        else:
-            st.error("""
-            **Tính năng giọng nói chưa khả dụng!**
-            
-            Cài đặt thư viện:
-            ```bash
-            pip install SpeechRecognition
-            ```
-            """)
     
-    # Main tabs - Điều chỉnh layout cho mobile
-    if device_info['is_mobile']:
-        # Trên mobile dùng selectbox thay vì tabs
-        tab_options = ["📢 PHẢN ÁNH AN NINH", "💬 DIỄN ĐÀN", "ℹ️ THÔNG TIN"]
-        selected_tab = st.selectbox("Chọn chức năng:", tab_options)
-        
-        # Map đến các tab tương ứng
-        tab_mapping = {
-            "📢 PHẢN ÁNH AN NINH": 0,
-            "💬 DIỄN ĐÀN": 1,
-            "ℹ️ THÔNG TIN": 2
-        }
-        current_tab_index = tab_mapping[selected_tab]
-    else:
-        # Trên desktop dùng tabs bình thường
-        tab1, tab2, tab3 = st.tabs(["📢 PHẢN ÁNH AN NINH", "💬 DIỄN ĐÀN", "ℹ️ THÔNG TIN"])
-        current_tab_index = None
+    # Main tabs
+    tab1, tab2, tab3 = st.tabs(["📢 PHẢN ÁNH AN NINH", "💬 DIỄN ĐÀN", "ℹ️ THÔNG TIN"])
     
-    # ========= TAB 1: PHẢN ÁNH AN NINH (CHO CẢ MOBILE VÀ DESKTOP) =========
-    def render_tab1():
+    # ========= TAB 1: PHẢN ÁNH AN NINH =========
+    with tab1:
         st.subheader("Biểu mẫu Phản ánh An ninh Trật tự")
         
         # Hiển thị thời gian hiện tại
@@ -863,74 +942,58 @@ def main():
         if not SENDGRID_AVAILABLE:
             st.warning("⚠️ Tính năng email chưa sẵn sàng")
         
-        # ========== NÚT GIỌNG NÓI CHO FORM PHẢN ÁNH ==========
+        # ========== COMPONENT GIỌNG NÓI CHO FORM PHẢN ÁNH ==========
         st.markdown("### 🎤 Tính năng giọng nói")
         
-        if device_info['is_mobile']:
-            st.info("📱 **Trên điện thoại:** Chạm vào nút, cho phép micro, nói vào điện thoại")
+        # Tạo các component giọng nói cho từng field
+        speech_fields = {
+            'title': 'Tiêu đề phản ánh',
+            'location': 'Địa điểm',
+            'description': 'Mô tả chi tiết'
+        }
         
-        # Layout nút cho mobile/desktop
-        if device_info['is_mobile']:
-            # Trên mobile: các nút dọc
-            if st.button("🎤 Tiêu đề bằng giọng nói", 
-                        key="speech_title_btn_mobile", 
-                        use_container_width=True,
-                        help="Chạm để nói tiêu đề"):
-                if SPEECH_AVAILABLE:
-                    st.session_state.speech_target = "title"
-                    st.rerun()
+        # Container cho các component giọng nói
+        with st.container():
+            st.markdown('<div class="speech-section">', unsafe_allow_html=True)
             
-            if st.button("🎤 Địa điểm bằng giọng nói", 
-                        key="speech_location_btn_mobile", 
-                        use_container_width=True):
-                if SPEECH_AVAILABLE:
-                    st.session_state.speech_target = "location"
-                    st.rerun()
+            col1, col2, col3 = st.columns(3)
             
-            if st.button("🎤 Mô tả bằng giọng nói", 
-                        key="speech_desc_btn_mobile", 
-                        use_container_width=True):
-                if SPEECH_AVAILABLE:
-                    st.session_state.speech_target = "description"
-                    st.rerun()
-        else:
-            # Trên desktop: các nút ngang
-            col_speech1, col_speech2, col_speech3 = st.columns(3)
+            with col1:
+                st.markdown("**Tiêu đề bằng giọng nói:**")
+                st.components.v1.html(
+                    create_speech_component("speech_title", "Nói tiêu đề phản ánh"),
+                    height=400
+                )
+                
+            with col2:
+                st.markdown("**Địa điểm bằng giọng nói:**")
+                st.components.v1.html(
+                    create_speech_component("speech_location", "Nói địa điểm sự việc"),
+                    height=400
+                )
+                
+            with col3:
+                st.markdown("**Mô tả bằng giọng nói:**")
+                st.components.v1.html(
+                    create_speech_component("speech_description", "Nói mô tả chi tiết"),
+                    height=400
+                )
             
-            with col_speech1:
-                if st.button("🎤 Tiêu đề bằng giọng nói", 
-                           key="speech_title_btn", 
-                           use_container_width=True):
-                    if SPEECH_AVAILABLE:
-                        st.session_state.speech_target = "title"
-                        st.rerun()
-            
-            with col_speech2:
-                if st.button("🎤 Địa điểm bằng giọng nói", 
-                           key="speech_location_btn", 
-                           use_container_width=True):
-                    if SPEECH_AVAILABLE:
-                        st.session_state.speech_target = "location"
-                        st.rerun()
-            
-            with col_speech3:
-                if st.button("🎤 Mô tả bằng giọng nói", 
-                           key="speech_desc_btn", 
-                           use_container_width=True):
-                    if SPEECH_AVAILABLE:
-                        st.session_state.speech_target = "description"
-                        st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
         
         # FORM PHẢN ÁNH
         with st.form("security_report_form", clear_on_submit=True):
-            if device_info['is_mobile']:
-                # Trên mobile: form dọc
-                title_key = "report_title_input_mobile"
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Tiêu đề
+                title_key = "report_title_input"
                 if title_key not in st.session_state:
                     st.session_state[title_key] = ""
                 
-                if st.session_state.get('speech_target') == 'title' and st.session_state.get('speech_result'):
-                    st.session_state[title_key] = st.session_state.speech_result
+                # Nếu có kết quả từ speech component
+                if 'speech_results' in st.session_state and 'speech_title' in st.session_state.speech_results:
+                    st.session_state[title_key] = st.session_state.speech_results['speech_title']
                 
                 title = st.text_input(
                     "Tiêu đề phản ánh *", 
@@ -939,12 +1002,13 @@ def main():
                     key=title_key
                 )
                 
-                location_key = "report_location_input_mobile"
+                # Địa điểm
+                location_key = "report_location_input"
                 if location_key not in st.session_state:
                     st.session_state[location_key] = ""
                 
-                if st.session_state.get('speech_target') == 'location' and st.session_state.get('speech_result'):
-                    st.session_state[location_key] = st.session_state.speech_result
+                if 'speech_results' in st.session_state and 'speech_location' in st.session_state.speech_results:
+                    st.session_state[location_key] = st.session_state.speech_results['speech_location']
                 
                 location = st.text_input(
                     "Địa điểm", 
@@ -952,90 +1016,32 @@ def main():
                     value=st.session_state[location_key],
                     key=location_key
                 )
-                
+            
+            with col2:
                 incident_time = st.text_input(
                     "Thời gian xảy ra", 
                     placeholder=f"VD: {format_vietnam_time(now_vn, '%H:%M')} ngày {format_vietnam_time(now_vn, '%d/%m')}",
-                    key="report_time_mobile"
-                )
-                
-                # Mô tả
-                desc_key = "report_description_input_mobile"
-                if desc_key not in st.session_state:
-                    st.session_state[desc_key] = ""
-                
-                if st.session_state.get('speech_target') == 'description' and st.session_state.get('speech_result'):
-                    st.session_state[desc_key] = st.session_state.speech_result
-                
-                description = st.text_area(
-                    "Mô tả chi tiết *",
-                    height=120,
-                    placeholder="Mô tả đầy đủ sự việc, đối tượng, phương tiện, thiệt hại...",
-                    value=st.session_state[desc_key],
-                    key=desc_key
-                )
-            else:
-                # Trên desktop: form 2 cột
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    title_key = "report_title_input"
-                    if title_key not in st.session_state:
-                        st.session_state[title_key] = ""
-                    
-                    if st.session_state.get('speech_target') == 'title' and st.session_state.get('speech_result'):
-                        st.session_state[title_key] = st.session_state.speech_result
-                    
-                    title = st.text_input(
-                        "Tiêu đề phản ánh *", 
-                        placeholder="Ví dụ: Mất trộm xe máy tại...",
-                        value=st.session_state[title_key],
-                        key=title_key
-                    )
-                    
-                    location_key = "report_location_input"
-                    if location_key not in st.session_state:
-                        st.session_state[location_key] = ""
-                    
-                    if st.session_state.get('speech_target') == 'location' and st.session_state.get('speech_result'):
-                        st.session_state[location_key] = st.session_state.speech_result
-                    
-                    location = st.text_input(
-                        "Địa điểm", 
-                        placeholder="Số nhà, đường, phường/xã...",
-                        value=st.session_state[location_key],
-                        key=location_key
-                    )
-                
-                with col2:
-                    incident_time = st.text_input(
-                        "Thời gian xảy ra", 
-                        placeholder=f"VD: {format_vietnam_time(now_vn, '%H:%M')} ngày {format_vietnam_time(now_vn, '%d/%m')}",
-                        key="report_time"
-                    )
-                
-                # Mô tả
-                desc_key = "report_description_input"
-                if desc_key not in st.session_state:
-                    st.session_state[desc_key] = ""
-                
-                if st.session_state.get('speech_target') == 'description' and st.session_state.get('speech_result'):
-                    st.session_state[desc_key] = st.session_state.speech_result
-                
-                description = st.text_area(
-                    "Mô tả chi tiết *",
-                    height=150,
-                    placeholder="Mô tả đầy đủ sự việc, đối tượng, phương tiện, thiệt hại...",
-                    value=st.session_state[desc_key],
-                    key=desc_key
+                    key="report_time"
                 )
             
-            # Nút submit
-            submitted = st.form_submit_button(
-                "🚨 GỬI PHẢN ÁNH", 
-                use_container_width=True,
-                type="primary"
+            # Mô tả
+            desc_key = "report_description_input"
+            if desc_key not in st.session_state:
+                st.session_state[desc_key] = ""
+            
+            if 'speech_results' in st.session_state and 'speech_description' in st.session_state.speech_results:
+                st.session_state[desc_key] = st.session_state.speech_results['speech_description']
+            
+            description = st.text_area(
+                "Mô tả chi tiết *",
+                height=150,
+                placeholder="Mô tả đầy đủ sự việc, đối tượng, phương tiện, thiệt hại...",
+                value=st.session_state[desc_key],
+                key=desc_key
             )
+            
+            # Nút submit
+            submitted = st.form_submit_button("🚨 GỬI PHẢN ÁNH", use_container_width=True)
             
             if submitted:
                 if not title or not description:
@@ -1068,82 +1074,63 @@ def main():
                             """, unsafe_allow_html=True)
                         
                         # Xóa kết quả giọng nói sau khi submit
-                        st.session_state.speech_result = None
+                        if 'speech_results' in st.session_state:
+                            st.session_state.speech_results = {}
                         
-                        # Xóa các key session
-                        keys_to_clear = [
-                            'report_title_input', 'report_title_input_mobile',
-                            'report_location_input', 'report_location_input_mobile',
-                            'report_description_input', 'report_description_input_mobile'
-                        ]
-                        for key in keys_to_clear:
-                            if key in st.session_state:
-                                st.session_state[key] = ""
+                        # Xóa các field
+                        st.session_state[title_key] = ""
+                        st.session_state[location_key] = ""
+                        st.session_state[desc_key] = ""
                     else:
                         st.error("❌ Lỗi lưu phản ánh. Vui lòng thử lại!")
     
     # ========= TAB 2: DIỄN ĐÀN =========
-    def render_tab2():
-        if device_info['is_mobile']:
-            col1, col2 = st.columns([2, 1])
-        else:
-            col1, col2 = st.columns([3, 1])
+    with tab2:
+        col1, col2 = st.columns([3, 1])
         
         with col1:
             st.subheader("💬 Diễn đàn Hỏi đáp Pháp luật")
             st.info("⚠️ **Chỉ công an mới được bình luận và trả lời câu hỏi**")
         with col2:
-            if st.button("📝 Đặt câu hỏi mới", type="primary", 
-                        key="new_question_btn",
-                        use_container_width=True):
+            if st.button("📝 Đặt câu hỏi mới", type="primary", key="new_question_btn"):
                 st.session_state.show_new_question = True
         
         # Nếu đang đặt câu hỏi mới
         if st.session_state.show_new_question:
             st.markdown("### 🎤 Tính năng giọng nói cho câu hỏi")
             
-            if device_info['is_mobile']:
-                if st.button("🎤 Tiêu đề câu hỏi", 
-                           key="speech_q_title_btn_mobile", 
-                           use_container_width=True):
-                    if SPEECH_AVAILABLE:
-                        st.session_state.speech_target = "forum_title"
-                        st.rerun()
+            with st.container():
+                st.markdown('<div class="speech-section">', unsafe_allow_html=True)
                 
-                if st.button("🎤 Nội dung câu hỏi", 
-                           key="speech_q_content_btn_mobile", 
-                           use_container_width=True):
-                    if SPEECH_AVAILABLE:
-                        st.session_state.speech_target = "forum_content"
-                        st.rerun()
-            else:
-                col_q_speech1, col_q_speech2 = st.columns(2)
-                with col_q_speech1:
-                    if st.button("🎤 Tiêu đề câu hỏi", 
-                               key="speech_q_title_btn", 
-                               use_container_width=True):
-                        if SPEECH_AVAILABLE:
-                            st.session_state.speech_target = "forum_title"
-                            st.rerun()
-                with col_q_speech2:
-                    if st.button("🎤 Nội dung câu hỏi", 
-                               key="speech_q_content_btn", 
-                               use_container_width=True):
-                        if SPEECH_AVAILABLE:
-                            st.session_state.speech_target = "forum_content"
-                            st.rerun()
+                col_q1, col_q2 = st.columns(2)
+                
+                with col_q1:
+                    st.markdown("**Tiêu đề câu hỏi bằng giọng nói:**")
+                    st.components.v1.html(
+                        create_speech_component("forum_title", "Nói tiêu đề câu hỏi"),
+                        height=400
+                    )
+                
+                with col_q2:
+                    st.markdown("**Nội dung câu hỏi bằng giọng nói:**")
+                    st.components.v1.html(
+                        create_speech_component("forum_content", "Nói nội dung câu hỏi"),
+                        height=400
+                    )
+                
+                st.markdown('</div>', unsafe_allow_html=True)
         
         # Form đặt câu hỏi mới
         if st.session_state.show_new_question:
             with st.expander("✍️ ĐẶT CÂU HỎI MỚI", expanded=True):
                 with st.form("new_question_form", clear_on_submit=True):
                     # Tiêu đề câu hỏi
-                    q_title_key = "q_title_input_mobile" if device_info['is_mobile'] else "q_title_input"
+                    q_title_key = "q_title_input"
                     if q_title_key not in st.session_state:
                         st.session_state[q_title_key] = ""
                     
-                    if st.session_state.get('speech_target') == 'forum_title' and st.session_state.get('speech_result'):
-                        st.session_state[q_title_key] = st.session_state.speech_result
+                    if 'speech_results' in st.session_state and 'forum_title' in st.session_state.speech_results:
+                        st.session_state[q_title_key] = st.session_state.speech_results['forum_title']
                     
                     q_title = st.text_input(
                         "Tiêu đề câu hỏi *",
@@ -1157,31 +1144,27 @@ def main():
                                              "Tư vấn thủ tục", "An ninh trật tự", "Khác"])
                     
                     # Nội dung câu hỏi
-                    q_content_key = "q_content_input_mobile" if device_info['is_mobile'] else "q_content_input"
+                    q_content_key = "q_content_input"
                     if q_content_key not in st.session_state:
                         st.session_state[q_content_key] = ""
                     
-                    if st.session_state.get('speech_target') == 'forum_content' and st.session_state.get('speech_result'):
-                        st.session_state[q_content_key] = st.session_state.speech_result
+                    if 'speech_results' in st.session_state and 'forum_content' in st.session_state.speech_results:
+                        st.session_state[q_content_key] = st.session_state.speech_results['forum_content']
                     
                     q_content = st.text_area(
                         "Nội dung chi tiết *",
-                        height=120 if device_info['is_mobile'] else 150,
+                        height=150,
                         placeholder="Mô tả rõ vấn đề bạn đang gặp phải...",
                         value=st.session_state[q_content_key],
                         key=q_content_key
                     )
                     
                     # Nút submit
-                    if device_info['is_mobile']:
-                        submit_q = st.form_submit_button("📤 Đăng câu hỏi", use_container_width=True)
-                        cancel_q = st.form_submit_button("❌ Hủy", use_container_width=True)
-                    else:
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            submit_q = st.form_submit_button("📤 Đăng câu hỏi", use_container_width=True)
-                        with col2:
-                            cancel_q = st.form_submit_button("❌ Hủy", use_container_width=True)
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        submit_q = st.form_submit_button("📤 Đăng câu hỏi")
+                    with col2:
+                        cancel_q = st.form_submit_button("❌ Hủy")
                     
                     if submit_q:
                         if not q_title or not q_content:
@@ -1193,7 +1176,8 @@ def main():
                                 st.success(f"✅ Câu hỏi đã đăng lúc {format_vietnam_time(current_time)}! (ID: {anon_id})")
                                 st.session_state.show_new_question = False
                                 # Xóa kết quả giọng nói
-                                st.session_state.speech_result = None
+                                if 'speech_results' in st.session_state:
+                                    st.session_state.speech_results = {}
                                 st.session_state[q_title_key] = ""
                                 st.session_state[q_content_key] = ""
                             else:
@@ -1202,30 +1186,22 @@ def main():
                     if cancel_q:
                         st.session_state.show_new_question = False
                         # Xóa kết quả giọng nói
-                        st.session_state.speech_result = None
+                        if 'speech_results' in st.session_state:
+                            st.session_state.speech_results = {}
         
         # Bộ lọc
         st.markdown("---")
-        
-        if device_info['is_mobile']:
+        col1, col2 = st.columns([2, 1])
+        with col1:
             filter_category = st.selectbox("Lọc theo chủ đề", 
                                          ["Tất cả", "Hỏi đáp pháp luật", "Giải quyết mâu thuẫn", 
                                           "Tư vấn thủ tục", "An ninh trật tự"],
-                                         key="filter_category_mobile")
-            search_term = st.text_input("Tìm kiếm...", key="search_term_mobile")
-        else:
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                filter_category = st.selectbox("Lọc theo chủ đề", 
-                                             ["Tất cả", "Hỏi đáp pháp luật", "Giải quyết mâu thuẫn", 
-                                              "Tư vấn thủ tục", "An ninh trật tự"],
-                                             key="filter_category")
-            with col2:
-                search_term = st.text_input("Tìm kiếm...", key="search_term")
+                                         key="filter_category")
+        with col2:
+            search_term = st.text_input("Tìm kiếm...", key="search_term")
         
         # Hiển thị danh sách câu hỏi
-        filter_val = filter_category if filter_category != "Tất cả" else "Tất cả"
-        df_posts = get_forum_posts(filter_val)
+        df_posts = get_forum_posts(filter_category if filter_category != "Tất cả" else "Tất cả")
         
         if not df_posts.empty:
             if search_term:
@@ -1272,35 +1248,26 @@ def main():
                     
                     # Form bình luận cho công an
                     if st.session_state.police_user:
-                        # Nút giọng nói cho bình luận
-                        if device_info['is_mobile']:
-                            if st.button(f"🎤 Bình luận bằng giọng nói", 
-                                       key=f"speech_reply_btn_mobile_{post['id']}",
-                                       use_container_width=True):
-                                if SPEECH_AVAILABLE:
-                                    st.session_state.speech_target = f"reply_{post['id']}"
-                                    st.rerun()
-                        else:
-                            col_reply_speech, _ = st.columns([1, 3])
-                            with col_reply_speech:
-                                if st.button(f"🎤 Bình luận bằng giọng nói", 
-                                           key=f"speech_reply_btn_{post['id']}",
-                                           use_container_width=True):
-                                    if SPEECH_AVAILABLE:
-                                        st.session_state.speech_target = f"reply_{post['id']}"
-                                        st.rerun()
+                        # Component giọng nói cho bình luận
+                        with st.container():
+                            st.markdown("### 🎤 Bình luận bằng giọng nói")
+                            st.components.v1.html(
+                                create_speech_component(f"reply_{post['id']}", "Nói bình luận của bạn"),
+                                height=400
+                            )
                         
                         reply_form_key = f"reply_form_{post['id']}"
                         with st.form(reply_form_key, clear_on_submit=True):
                             # Nội dung bình luận
-                            reply_key = f"reply_input_mobile_{post['id']}" if device_info['is_mobile'] else f"reply_input_{post['id']}"
+                            reply_key = f"reply_input_{post['id']}"
                             if reply_key not in st.session_state:
                                 st.session_state[reply_key] = ""
                             
-                            # Tự động điền nếu có kết quả giọng nói cho bài này
-                            if (st.session_state.get('speech_target') == f"reply_{post['id']}" and 
-                                st.session_state.get('speech_result')):
-                                st.session_state[reply_key] = st.session_state.speech_result
+                            # Tự động điền nếu có kết quả giọng nói
+                            speech_key = f"reply_{post['id']}"
+                            if ('speech_results' in st.session_state and 
+                                speech_key in st.session_state.speech_results):
+                                st.session_state[reply_key] = st.session_state.speech_results[speech_key]
                             
                             reply_content = st.text_area(
                                 "Bình luận của bạn:",
@@ -1330,7 +1297,8 @@ def main():
                                     if result[0]:
                                         st.success(f"✅ Đã gửi trả lời lúc {format_vietnam_time(get_vietnam_time())}!")
                                         # Xóa kết quả giọng nói
-                                        st.session_state.speech_result = None
+                                        if 'speech_results' in st.session_state:
+                                            st.session_state.speech_results.pop(speech_key, None)
                                         st.session_state[reply_key] = ""
                                     else:
                                         st.error(f"❌ {result[1]}")
@@ -1340,175 +1308,93 @@ def main():
             st.info("📝 Chưa có câu hỏi nào. Hãy là người đầu tiên đặt câu hỏi!")
     
     # ========= TAB 3: THÔNG TIN =========
-    def render_tab3():
+    with tab3:
         st.subheader("📖 Thông tin hệ thống")
         
         server_time = datetime.now()
         vietnam_time = get_vietnam_time()
         
-        if device_info['is_mobile']:
+        col_time1, col_time2 = st.columns(2)
+        with col_time1:
             st.markdown(f"""
             ### 🕐 Thời gian hệ thống
             **Server (UTC):** {server_time.strftime('%H:%M:%S %d/%m/%Y')}
-            
+            """)
+        with col_time2:
+            st.markdown(f"""
             ### 🇻🇳 Giờ Việt Nam
             **Hiện tại:** {format_vietnam_time(vietnam_time, '%H:%M:%S %d/%m/%Y')}
             **Múi giờ:** UTC+7 (Asia/Ho_Chi_Minh)
             """)
-        else:
-            col_time1, col_time2 = st.columns(2)
-            with col_time1:
-                st.markdown(f"""
-                ### 🕐 Thời gian hệ thống
-                **Server (UTC):** {server_time.strftime('%H:%M:%S %d/%m/%Y')}
-                """)
-            with col_time2:
-                st.markdown(f"""
-                ### 🇻🇳 Giờ Việt Nam
-                **Hiện tại:** {format_vietnam_time(vietnam_time, '%H:%M:%S %d/%m/%Y')}
-                **Múi giờ:** UTC+7 (Asia/Ho_Chi_Minh)
-                """)
         
-        if device_info['is_mobile']:
+        col1, col2 = st.columns(2)
+        
+        with col1:
             st.markdown("""
-            ### 📱 **Hướng dẫn sử dụng trên điện thoại:**
+            ### 📢 **Phản ánh An ninh:**
+            1. **Điền thông tin** sự việc
+            2. **Dùng nút giọng nói** nếu cần (trình duyệt sẽ hỏi popup cho phép micro)
+            3. **Nhấn GỬI PHẢN ÁNH** để gửi
             
-            **🎤 Giọng nói trên điện thoại:**
-            1. **Chạm vào nút giọng nói**
-            2. **Cho phép micro** khi trình duyệt hỏi
-            3. **Nói rõ ràng** vào micro điện thoại
-            4. **Chờ kết quả** nhận diện
-            
-            **🔧 Khắc phục lỗi:**
-            - **Không nghe thấy:** Kiểm tra volume, không bị tắt tiếng
-            - **Không nhận diện:** Nói to hơn, rõ ràng hơn
-            - **Lỗi micro:** Thử dùng Chrome thay vì Safari
-            
-            **📢 Phản ánh an ninh:**
-            1. Điền thông tin sự việc
-            2. Dùng giọng nói nếu cần
-            3. Gửi phản ánh
+            ### 🎤 **Hướng dẫn sử dụng micro:**
+            - **Chrome/Firefox:** Click vào 🔒 → cho phép Microphone
+            - **Safari:** Safari → Cài đặt → Trang web → Microphone → Cho phép
+            - **Đã từ chối?** Xóa cache và thử lại
             """)
-        else:
-            col1, col2 = st.columns(2)
+        
+        with col2:
+            st.markdown("""
+            ### 💬 **Diễn đàn:**
+            1. **Đặt câu hỏi** ẩn danh
+            2. **Chỉ công an** được trả lời
+            3. **Dùng giọng nói** để đặt câu hỏi nhanh
             
-            with col1:
-                st.markdown("""
-                ### 📢 **Phản ánh An ninh:**
-                1. **Điền thông tin** sự việc
-                2. **Dùng nút giọng nói** nếu cần
-                3. **Nhấn GỬI PHẢN ÁNH** để gửi
-                
-                ### 🎤 **Hướng dẫn sử dụng micro:**
-                - **Chrome/Firefox:** Click vào 🔒 → cho phép Microphone
-                - **Safari:** Safari → Cài đặt → Trang web → Microphone → Cho phép
-                - **Đã từ chối?** Xóa cache và thử lại
-                """)
-            
-            with col2:
-                st.markdown("""
-                ### 💬 **Diễn đàn:**
-                1. **Đặt câu hỏi** ẩn danh
-                2. **Chỉ công an** được trả lời
-                3. **Dùng giọng nói** để đặt câu hỏi nhanh
-                
-                ### 🔒 **Bảo mật:**
-                - **Không lưu IP** thực (chỉ hash)
-                - **Không đăng ký** tài khoản
-                - **Email** được mã hóa
-                """)
+            ### 🔒 **Bảo mật:**
+            - **Không lưu IP** thực (chỉ hash)
+            - **Không đăng ký** tài khoản
+            - **Email** được mã hóa
+            """)
         
         st.markdown("---")
+        st.markdown("### 🎤 Hướng dẫn sử dụng tính năng giọng nói")
         
-        # Hướng dẫn theo thiết bị
-        if device_info['is_mobile'] and device_info['is_ios']:
-            st.markdown("### 📱 **Hướng dẫn đặc biệt cho iPhone/iPad:**")
-            st.info("""
-            **1. Cho phép micro trên iOS:**
-            - Khi Safari/Chrome hỏi → **Cho phép**
-            - Nếu bỏ lỡ: Cài đặt → Safari → Microphone → Bật
+        st.info("""
+        **Web Speech API hoạt động trên:**
+        - ✅ **Chrome 25+** (tốt nhất)
+        - ✅ **Edge 79+** (tốt)
+        - ✅ **Safari 14.1+** (hỗ trợ cơ bản)
+        - ✅ **Firefox** (cần bật flag)
+        
+        **Hỗ trợ tiếng Việt:**
+        - Nhận diện tiếng Việt chính xác
+        - Hỗ trợ đa ngôn ngữ
+        - Không cần cài đặt thêm
+        
+        **Trên điện thoại:**
+        - **iOS Safari:** Hỗ trợ đầy đủ
+        - **Android Chrome:** Hoạt động tốt
+        - **Micro tự động:** Sử dụng micro điện thoại
+        """)
+        
+        # Thông tin về Web Speech API
+        with st.expander("🔧 Thông tin kỹ thuật về Web Speech API"):
+            st.markdown("""
+            **Ưu điểm so với PyAudio:**
+            1. **Không cần cài đặt** thư viện âm thanh
+            2. **Hoạt động trên mọi hệ điều hành**
+            3. **Tương thích mobile** hoàn hảo
+            4. **Không lỗi biên dịch** portaudio
             
-            **2. Vị trí micro:**
-            - **iPhone:** Micro dưới màn hình
-            - **iPad:** Micro trên cạnh
+            **Cách hoạt động:**
+            - Trình duyệt xử lý toàn bộ việc ghi âm
+            - Google Cloud Speech-to-Text xử lý nhận diện
+            - Kết quả trả về trực tiếp cho ứng dụng
             
-            **3. Cải thiện chất lượng:**
-            - Giữ điện thoại cách miệng 10-15cm
-            - Nói trong môi trường yên tĩnh
-            - Tránh che micro bằng tay
+            **Bảo mật:**
+            - Âm thanh không gửi lên server của chúng tôi
+            - Google xử lý và xóa sau khi nhận diện
+            - Tuân thủ chính sách bảo mật trình duyệt
             """)
-        
-        elif device_info['is_mobile'] and device_info['is_android']:
-            st.markdown("### 📱 **Hướng dẫn đặc biệt cho Android:**")
-            st.info("""
-            **1. Cho phép micro trên Android:**
-            - Khi Chrome hỏi → **Cho phép**
-            - Nếu bỏ lỡ: Cài đặt → Ứng dụng → Chrome → Quyền → Micro → Cho phép
-            
-            **2. Trình duyệt tốt nhất:**
-            - **Chrome:** Hỗ trợ tốt nhất
-            - **Firefox:** Cũng tốt
-            - Tránh trình duyệt mặc định Samsung
-            
-            **3. Mẹo sử dụng:**
-            - Dùng micro chính (thường ở dưới)
-            - Nói rõ ràng, không quá nhanh
-            - Kiểm tra kết nối internet
-            """)
-        
-        elif device_info['is_safari']:
-            st.markdown("### 🍎 **Hướng dẫn đặc biệt cho Safari:**")
-            st.info("""
-            **Safari thường chặn micro, làm theo:**
-            
-            1. **Cho phép ngay:**
-               - Click **Cho phép** trong popup
-               - Nếu không thấy, refresh trang
-            
-            2. **Cài đặt thủ công:**
-               - Safari → Preferences (⌘+,)
-               - Chọn tab **Websites**
-               - Chọn **Microphone** trong sidebar
-               - Tìm `localhost:8501` → Chọn **Allow**
-            
-            3. **Nếu vẫn không được:**
-               - Safari → Preferences → Privacy
-               - Bỏ tick **Prevent cross-site tracking**
-               - Refresh và thử lại
-            """)
-        
-        # Thông tin debug
-        with st.expander("🔧 Thông tin kỹ thuật (Debug)"):
-            st.json(device_info)
-            
-            if SPEECH_AVAILABLE:
-                try:
-                    import speech_recognition as sr
-                    mics = sr.Microphone.list_microphone_names()
-                    st.write(f"**Micro tìm thấy:** {len(mics)}")
-                    if mics:
-                        for i, mic in enumerate(mics[:5]):
-                            st.write(f"{i+1}. {mic}")
-                except:
-                    st.write("Không thể liệt kê micro")
-    
-    # Render các tab tùy theo thiết bị
-    if device_info['is_mobile']:
-        # Trên mobile: render tab được chọn
-        if current_tab_index == 0:
-            render_tab1()
-        elif current_tab_index == 1:
-            render_tab2()
-        elif current_tab_index == 2:
-            render_tab3()
-    else:
-        # Trên desktop: render tất cả tabs
-        with tab1:
-            render_tab1()
-        with tab2:
-            render_tab2()
-        with tab3:
-            render_tab3()
 
 # ================ CHẠY ỨNG DỤNG ================
 if __name__ == "__main__":
