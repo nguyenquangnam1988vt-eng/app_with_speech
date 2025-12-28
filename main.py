@@ -43,11 +43,9 @@ def format_vietnam_time(dt, format_str='%H:%M %d/%m/%Y'):
     
     return dt.strftime(format_str)
 
-# ================ PHÁT HIỆN THIẾT BỊ ================
+# ================ PHÁT HIỆN THIẾT BỊ (FIXED) ================
 def detect_device_info():
-    """Phát hiện loại thiết bị và trình duyệt"""
-    import urllib.parse
-    
+    """Phát hiện loại thiết bị và trình duyệt - FIXED"""
     device_info = {
         'is_mobile': False,
         'is_ios': False,
@@ -60,20 +58,27 @@ def detect_device_info():
     }
     
     try:
-        # Cố gắng lấy thông tin từ query params
-        query_params = st.query_params.to_dict()
-        user_agent = query_params.get('_ua', '')
+        # FIX: Dùng experimental_get_query_params thay vì query_params
+        try:
+            query_params = st.experimental_get_query_params()
+            user_agent = query_params.get('_ua', [''])[0].lower()
+        except:
+            user_agent = ''
         
+        # Phát hiện dựa trên user agent
         if not user_agent:
             # Fallback: dựa trên platform
+            import platform
             system = platform.system()
             device_info['os'] = system
             
+            # Giả định Safari trên macOS, Chrome trên Windows
             if system == 'Darwin':
-                device_info['is_safari'] = True  # Giả định Safari trên macOS
+                device_info['is_safari'] = True
+            elif system == 'Windows':
+                device_info['is_chrome'] = True
+            
             return device_info
-        
-        user_agent = user_agent.lower()
         
         # Phát hiện hệ điều hành
         if 'iphone' in user_agent or 'ipad' in user_agent or 'ipod' in user_agent:
