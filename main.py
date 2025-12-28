@@ -41,7 +41,6 @@ def format_vietnam_time(dt, format_str='%H:%M %d/%m/%Y'):
     return dt.strftime(format_str)
 
 # ================ IMPORT THƯ VIỆN ================
-# Không cần SpeechRecognition nữa, dùng streamlit-mic-recorder thay thế
 try:
     from streamlit_mic_recorder import mic_recorder
     MIC_RECORDER_AVAILABLE = True
@@ -49,7 +48,6 @@ except ImportError:
     MIC_RECORDER_AVAILABLE = False
     st.warning("⚠️ Thư viện streamlit-mic-recorder chưa cài đặt. Vui lòng chạy: pip install streamlit-mic-recorder")
 
-# Vẫn giữ speech_recognition để xử lý audio nếu cần
 SPEECH_AVAILABLE = False
 try:
     import speech_recognition as sr
@@ -57,10 +55,8 @@ try:
 except ImportError:
     SPEECH_AVAILABLE = False
 
-# Import werkzeug thay bcrypt
 from werkzeug.security import generate_password_hash, check_password_hash
 
-# Import SendGrid email service
 try:
     from email_service import send_email_report
     SENDGRID_AVAILABLE = True
@@ -152,29 +148,11 @@ st.markdown("""
         font-size: 0.9em;
         margin: 5px 0;
     }
-    .speech-btn {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border: none;
-        padding: 10px 15px;
-        border-radius: 8px;
-        cursor: pointer;
-        font-weight: bold;
-        width: 100%;
-        margin: 5px 0;
-    }
-    .speech-btn:hover {
-        background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
-    }
     .mic-recorder-container {
         background: linear-gradient(135deg, #f0f8ff 0%, #e6f3ff 100%);
-        padding: 20px;
+        padding: 15px;
         border-radius: 10px;
         border: 2px solid #3B82F6;
-        margin: 10px 0;
-    }
-    .audio-player {
-        width: 100%;
         margin: 10px 0;
     }
     .recorder-grid {
@@ -183,10 +161,13 @@ st.markdown("""
         gap: 15px;
         margin-bottom: 20px;
     }
+    .form-clear-button {
+        margin-top: 10px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# ================ HÀM XỬ LÝ AUDIO MỚI (DÙNG STREAMLIT-MIC-RECORDER) ================
+# ================ HÀM XỬ LÝ AUDIO ================
 def process_audio_to_text(audio_bytes, language='vi-VN'):
     """Xử lý audio bytes thành văn bản"""
     if not SPEECH_AVAILABLE:
@@ -195,23 +176,18 @@ def process_audio_to_text(audio_bytes, language='vi-VN'):
     try:
         recognizer = sr.Recognizer()
         
-        # Tạo file audio tạm thời
         import tempfile
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
             tmp_file.write(audio_bytes)
             tmp_path = tmp_file.name
         
         try:
-            # Đọc file audio
             with sr.AudioFile(tmp_path) as source:
                 audio = recognizer.record(source)
             
-            # Nhận diện với Google
             text = recognizer.recognize_google(audio, language=language)
             
-            # Xóa file tạm
             os.unlink(tmp_path)
-            
             return text, None
             
         except sr.UnknownValueError:
@@ -227,15 +203,15 @@ def process_audio_to_text(audio_bytes, language='vi-VN'):
 def create_mic_recorder_component(key_suffix, label="Ghi âm"):
     """Tạo component ghi âm với streamlit-mic-recorder"""
     if not MIC_RECORDER_AVAILABLE:
+        st.warning("⚠️ Thư viện streamlit-mic-recorder chưa khả dụng")
         return None
     
     with st.container():
         st.markdown(f"<div class='mic-recorder-container'>", unsafe_allow_html=True)
         st.markdown(f"### 🎤 {label}")
         
-        # Hiển thị mic recorder
         audio = mic_recorder(
-            start_prompt=f"🎤 Bắt đầu ghi âm {label}",
+            start_prompt=f"🎤 Bắt đầu ghi âm",
             stop_prompt="⏹️ Dừng ghi âm",
             key=f"recorder_{key_suffix}",
             format="wav"
@@ -244,7 +220,6 @@ def create_mic_recorder_component(key_suffix, label="Ghi âm"):
         if audio:
             st.audio(audio['bytes'], format="audio/wav")
             
-            # Nút để chuyển thành văn bản
             if st.button(f"📝 Chuyển thành văn bản ({label})", key=f"convert_{key_suffix}"):
                 with st.spinner("Đang chuyển giọng nói thành văn bản..."):
                     text, error = process_audio_to_text(audio['bytes'])
@@ -276,7 +251,6 @@ def init_database():
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         
-        # Bảng phản ánh an ninh
         c.execute('''
             CREATE TABLE IF NOT EXISTS security_reports (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -290,7 +264,6 @@ def init_database():
             )
         ''')
         
-        # Bảng diễn đàn
         c.execute('''
             CREATE TABLE IF NOT EXISTS forum_posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -304,7 +277,6 @@ def init_database():
             )
         ''')
         
-        # Bảng bình luận
         c.execute('''
             CREATE TABLE IF NOT EXISTS forum_replies (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -319,7 +291,6 @@ def init_database():
             )
         ''')
         
-        # Bảng công an
         c.execute('''
             CREATE TABLE IF NOT EXISTS police_users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -330,7 +301,6 @@ def init_database():
             )
         ''')
         
-        # Tạo admin mặc định nếu chưa có
         c.execute("SELECT COUNT(*) FROM police_users WHERE badge_number = 'CA001'")
         if c.fetchone()[0] == 0:
             password_hash = generate_password_hash("congan123", method='pbkdf2:sha256')
@@ -547,8 +517,15 @@ def main():
         st.session_state.police_user = None
     if 'show_new_question' not in st.session_state:
         st.session_state.show_new_question = False
-    if 'speech_texts' not in st.session_state:
-        st.session_state.speech_texts = {}
+    if 'form_submitted' not in st.session_state:
+        st.session_state.form_submitted = False
+    if 'form_data' not in st.session_state:
+        st.session_state.form_data = {
+            'title': '',
+            'location': '',
+            'incident_time': '',
+            'description': ''
+        }
     
     # Header với thời gian VN
     vietnam_now = get_vietnam_time()
@@ -636,20 +613,6 @@ def main():
             st.success("📝 Nhận diện giọng nói: Sẵn sàng")
         else:
             st.warning("📝 Nhận diện giọng nói: Cần speech_recognition")
-        
-        # Nút kiểm tra ghi âm
-        st.markdown("### 🎤 Kiểm tra ghi âm")
-        if MIC_RECORDER_AVAILABLE:
-            st.info("Nhấn nút 🎤 trong form để ghi âm")
-        else:
-            st.error("""
-            **Thư viện ghi âm chưa khả dụng!**
-            
-            Cài đặt:
-            ```bash
-            pip install streamlit-mic-recorder
-            ```
-            """)
     
     # Main tabs
     tab1, tab2, tab3 = st.tabs(["📢 PHẢN ÁNH AN NINH", "💬 DIỄN ĐÀN", "ℹ️ THÔNG TIN"])
@@ -665,66 +628,70 @@ def main():
         if not SENDGRID_AVAILABLE:
             st.warning("⚠️ Tính năng email chưa sẵn sàng")
         
+        # Xử lý form submitted
+        if st.session_state.form_submitted:
+            st.markdown(f"""
+            <div class="success-box">
+                <h4>✅ ĐÃ TIẾP NHẬN PHẢN ÁNH</h4>
+                <p>Phản ánh đã được gửi đến Công an. Cảm ơn bạn đã đóng góp!</p>
+                <p><strong>Thời gian tiếp nhận:</strong> {format_vietnam_time(now_vn)}</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if st.button("📝 Tạo phản ánh mới", type="primary"):
+                st.session_state.form_submitted = False
+                st.session_state.form_data = {
+                    'title': '',
+                    'location': '',
+                    'incident_time': '',
+                    'description': ''
+                }
+                st.rerun()
+            return
+        
         # ========== COMPONENT GHI ÂM MỚI ==========
         if MIC_RECORDER_AVAILABLE:
             st.markdown("### 🎤 Ghi âm dễ dàng với mic recorder")
-            st.info("""
-            **Cách sử dụng:**
-            1. Nhấn **🎤 Bắt đầu ghi âm** (trình duyệt sẽ hỏi cho phép micro)
-            2. **Nói** nội dung của bạn
-            3. Nhấn **⏹️ Dừng ghi âm** khi hoàn thành
-            4. Nghe lại file ghi âm
-            5. Nhấn **📝 Chuyển thành văn bản** để nhận diện
-            """)
             
-            # Tạo các recorder component dạng grid
+            # Tạo các recorder component dạng grid - FIXED: Đảm bảo chỉ có 3 component
             st.markdown('<div class="recorder-grid">', unsafe_allow_html=True)
             
+            # Chỉ tạo 3 columns, không có ô trống thừa
             col1, col2, col3 = st.columns(3)
             
             with col1:
                 title_text = create_mic_recorder_component("title", "Tiêu đề phản ánh")
                 if title_text:
-                    st.session_state.speech_texts['title'] = title_text
+                    st.session_state.form_data['title'] = title_text
             
             with col2:
                 location_text = create_mic_recorder_component("location", "Địa điểm")
                 if location_text:
-                    st.session_state.speech_texts['location'] = location_text
+                    st.session_state.form_data['location'] = location_text
             
             with col3:
                 desc_text = create_mic_recorder_component("description", "Mô tả chi tiết")
                 if desc_text:
-                    st.session_state.speech_texts['description'] = desc_text
+                    st.session_state.form_data['description'] = desc_text
             
             st.markdown('</div>', unsafe_allow_html=True)
         
-        # FORM PHẢN ÁNH
-        with st.form("security_report_form", clear_on_submit=True):
+        # FORM PHẢN ÁNH - KHÔNG DÙNG clear_on_submit
+        with st.form("security_report_form", clear_on_submit=False):
             col1, col2 = st.columns(2)
             
             with col1:
-                # Tiêu đề - tự động điền từ giọng nói nếu có
-                title_placeholder = ""
-                if 'speech_texts' in st.session_state and 'title' in st.session_state.speech_texts:
-                    title_placeholder = st.session_state.speech_texts['title']
-                
                 title = st.text_input(
                     "Tiêu đề phản ánh *", 
                     placeholder="Ví dụ: Mất trộm xe máy tại...",
-                    value=title_placeholder,
+                    value=st.session_state.form_data['title'],
                     key="report_title"
                 )
-                
-                # Địa điểm
-                location_placeholder = ""
-                if 'speech_texts' in st.session_state and 'location' in st.session_state.speech_texts:
-                    location_placeholder = st.session_state.speech_texts['location']
                 
                 location = st.text_input(
                     "Địa điểm", 
                     placeholder="Số nhà, đường, phường/xã...",
-                    value=location_placeholder,
+                    value=st.session_state.form_data['location'],
                     key="report_location"
                 )
             
@@ -732,64 +699,57 @@ def main():
                 incident_time = st.text_input(
                     "Thời gian xảy ra", 
                     placeholder=f"VD: {format_vietnam_time(now_vn, '%H:%M')} ngày {format_vietnam_time(now_vn, '%d/%m')}",
+                    value=st.session_state.form_data['incident_time'],
                     key="report_time"
                 )
-            
-            # Mô tả
-            desc_placeholder = ""
-            if 'speech_texts' in st.session_state and 'description' in st.session_state.speech_texts:
-                desc_placeholder = st.session_state.speech_texts['description']
             
             description = st.text_area(
                 "Mô tả chi tiết *",
                 height=150,
                 placeholder="Mô tả đầy đủ sự việc, đối tượng, phương tiện, thiệt hại...",
-                value=desc_placeholder,
+                value=st.session_state.form_data['description'],
                 key="report_description"
             )
             
-            # Nút submit
-            submitted = st.form_submit_button("🚨 GỬI PHẢN ÁNH", use_container_width=True)
+            # Nút submit và clear
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                submitted = st.form_submit_button("🚨 GỬI PHẢN ÁNH", use_container_width=True)
+            with col2:
+                clear_form = st.form_submit_button("🗑️ Xóa form", use_container_width=True)
+            
+            if clear_form:
+                st.session_state.form_data = {
+                    'title': '',
+                    'location': '',
+                    'incident_time': '',
+                    'description': ''
+                }
+                st.rerun()
             
             if submitted:
                 if not title or not description:
                     st.error("⚠️ Vui lòng điền tiêu đề và mô tả sự việc!")
                 else:
-                    submit_time = get_vietnam_time()
-                    
-                    report_id, email_success, email_message = handle_security_report(
-                        title, description, location, incident_time
-                    )
-                    
-                    if report_id:
-                        if email_success:
-                            st.markdown(f"""
-                            <div class="success-box">
-                                <h4>✅ ĐÃ TIẾP NHẬN PHẢN ÁNH #{report_id:06d}</h4>
-                                <p>{email_message}</p>
-                                <p><strong>Thời gian tiếp nhận:</strong> {format_vietnam_time(submit_time)}</p>
-                                <p>Phản ánh đã được gửi đến Công an. Cảm ơn bạn đã đóng góp!</p>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        else:
-                            st.markdown(f"""
-                            <div class="warning-box">
-                                <h4>⚠️ ĐÃ LƯU PHẢN ÁNH #{report_id:06d}</h4>
-                                <p>{email_message}</p>
-                                <p><strong>Thời gian lưu:</strong> {format_vietnam_time(submit_time)}</p>
-                                <p>Vui lòng liên hệ trực tiếp Công an địa phương nếu cần thiết.</p>
-                            </div>
-                            """, unsafe_allow_html=True)
+                    with st.spinner("Đang xử lý phản ánh..."):
+                        submit_time = get_vietnam_time()
                         
-                        # Xóa kết quả giọng nói sau khi submit
-                        st.session_state.speech_texts = {}
-                        # Xóa các field thông qua session state
-                        st.session_state.report_title = ""
-                        st.session_state.report_location = ""
-                        st.session_state.report_description = ""
-                        st.session_state.report_time = ""
-                    else:
-                        st.error("❌ Lỗi lưu phản ánh. Vui lòng thử lại!")
+                        report_id, email_success, email_message = handle_security_report(
+                            title, description, location, incident_time
+                        )
+                        
+                        if report_id:
+                            # Không xóa session state, chỉ đánh dấu đã submit
+                            st.session_state.form_submitted = True
+                            st.session_state.form_data = {
+                                'title': '',
+                                'location': '',
+                                'incident_time': '',
+                                'description': ''
+                            }
+                            st.rerun()
+                        else:
+                            st.error("❌ Lỗi lưu phản ánh. Vui lòng thử lại!")
     
     # ========= TAB 2: DIỄN ĐÀN =========
     with tab2:
@@ -800,38 +760,15 @@ def main():
             st.info("⚠️ **Chỉ công an mới được bình luận và trả lời câu hỏi**")
         with col2:
             if st.button("📝 Đặt câu hỏi mới", type="primary", key="new_question_btn"):
-                st.session_state.show_new_question = True
-        
-        # Nếu đang đặt câu hỏi mới
-        if st.session_state.show_new_question:
-            if MIC_RECORDER_AVAILABLE:
-                st.markdown("### 🎤 Ghi âm cho câu hỏi")
-                
-                col_q1, col_q2 = st.columns(2)
-                
-                with col_q1:
-                    title_text = create_mic_recorder_component("forum_title", "Tiêu đề câu hỏi")
-                    if title_text:
-                        st.session_state.speech_texts['forum_title'] = title_text
-                
-                with col_q2:
-                    content_text = create_mic_recorder_component("forum_content", "Nội dung câu hỏi")
-                    if content_text:
-                        st.session_state.speech_texts['forum_content'] = content_text
+                st.session_state.show_new_question = not st.session_state.show_new_question
         
         # Form đặt câu hỏi mới
         if st.session_state.show_new_question:
             with st.expander("✍️ ĐẶT CÂU HỎI MỚI", expanded=True):
-                with st.form("new_question_form", clear_on_submit=True):
-                    # Tiêu đề câu hỏi
-                    q_title_placeholder = ""
-                    if 'speech_texts' in st.session_state and 'forum_title' in st.session_state.speech_texts:
-                        q_title_placeholder = st.session_state.speech_texts['forum_title']
-                    
+                with st.form("new_question_form"):
                     q_title = st.text_input(
                         "Tiêu đề câu hỏi *",
                         placeholder="Nhập tiêu đề câu hỏi",
-                        value=q_title_placeholder,
                         key="q_title_input"
                     )
                     
@@ -839,20 +776,13 @@ def main():
                                             ["Hỏi đáp pháp luật", "Giải quyết mâu thuẫn", 
                                              "Tư vấn thủ tục", "An ninh trật tự", "Khác"])
                     
-                    # Nội dung câu hỏi
-                    q_content_placeholder = ""
-                    if 'speech_texts' in st.session_state and 'forum_content' in st.session_state.speech_texts:
-                        q_content_placeholder = st.session_state.speech_texts['forum_content']
-                    
                     q_content = st.text_area(
                         "Nội dung chi tiết *",
                         height=150,
                         placeholder="Mô tả rõ vấn đề bạn đang gặp phải...",
-                        value=q_content_placeholder,
                         key="q_content_input"
                     )
                     
-                    # Nút submit
                     col1, col2 = st.columns(2)
                     with col1:
                         submit_q = st.form_submit_button("📤 Đăng câu hỏi")
@@ -868,15 +798,13 @@ def main():
                                 current_time = get_vietnam_time()
                                 st.success(f"✅ Câu hỏi đã đăng lúc {format_vietnam_time(current_time)}! (ID: {anon_id})")
                                 st.session_state.show_new_question = False
-                                # Xóa kết quả giọng nói
-                                st.session_state.speech_texts = {}
+                                st.rerun()
                             else:
                                 st.error(f"❌ {error}")
                     
                     if cancel_q:
                         st.session_state.show_new_question = False
-                        # Xóa kết quả giọng nói
-                        st.session_state.speech_texts = {}
+                        st.rerun()
         
         # Bộ lọc
         st.markdown("---")
@@ -936,33 +864,15 @@ def main():
                         st.info("Chưa có bình luận nào.")
                     
                     # Form bình luận cho công an
-                    if st.session_state.police_user and MIC_RECORDER_AVAILABLE:
-                        # Component ghi âm cho bình luận
-                        reply_text = create_mic_recorder_component(
-                            f"reply_{post['id']}", 
-                            f"Bình luận cho: {post['title'][:30]}..."
-                        )
-                        
-                        if reply_text:
-                            st.session_state.speech_texts[f'reply_{post["id"]}'] = reply_text
-                        
-                        reply_form_key = f"reply_form_{post['id']}"
-                        with st.form(reply_form_key, clear_on_submit=True):
-                            # Nội dung bình luận
-                            reply_key = f"reply_{post['id']}"
-                            reply_placeholder = ""
-                            if 'speech_texts' in st.session_state and reply_key in st.session_state.speech_texts:
-                                reply_placeholder = st.session_state.speech_texts[reply_key]
-                            
+                    if st.session_state.police_user:
+                        with st.form(f"reply_form_{post['id']}"):
                             reply_content = st.text_area(
                                 "Bình luận của bạn:",
                                 height=80,
                                 placeholder="Viết câu trả lời hoặc ý kiến...",
-                                value=reply_placeholder,
                                 key=f"reply_input_{post['id']}"
                             )
                             
-                            # Nút submit
                             submitted_reply = st.form_submit_button(
                                 f"👮 Trả lời ({st.session_state.police_user['display_name']})",
                                 use_container_width=True
@@ -981,9 +891,7 @@ def main():
                                     
                                     if result[0]:
                                         st.success(f"✅ Đã gửi trả lời lúc {format_vietnam_time(get_vietnam_time())}!")
-                                        # Xóa kết quả giọng nói
-                                        if reply_key in st.session_state.speech_texts:
-                                            del st.session_state.speech_texts[reply_key]
+                                        st.rerun()
                                     else:
                                         st.error(f"❌ {result[1]}")
                     else:
@@ -1011,58 +919,19 @@ def main():
             **Múi giờ:** UTC+7 (Asia/Ho_Chi_Minh)
             """)
         
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("""
-            ### 📢 **Phản ánh An ninh:**
-            1. **Điền thông tin** sự việc
-            2. **Dùng ghi âm** để nhập nhanh
-            3. **Nhấn GỬI PHẢN ÁNH** để gửi
-            
-            ### 🎤 **Cách dùng streamlit-mic-recorder:**
-            - **Dễ dàng:** Chỉ cần nhấn nút ghi âm
-            - **Hỗ trợ mọi trình duyệt:** Chrome, Safari, Firefox
-            - **Mobile tốt:** Hoạt động trên điện thoại
-            - **Nghe lại:** Có thể nghe lại trước khi chuyển text
-            """)
-        
-        with col2:
-            st.markdown("""
-            ### 💬 **Diễn đàn:**
-            1. **Đặt câu hỏi** ẩn danh
-            2. **Chỉ công an** được trả lời
-            3. **Dùng ghi âm** để đặt câu hỏi nhanh
-            
-            ### 🔒 **Bảo mật:**
-            - **Không lưu IP** thực (chỉ hash)
-            - **Không đăng ký** tài khoản
-            - **Email** được mã hóa
-            - **Audio** chỉ lưu tạm thời
-            """)
-        
-        st.markdown("---")
-        st.markdown("### 🎤 Hướng dẫn sử dụng tính năng ghi âm")
-        
         st.info("""
-        **Ưu điểm của streamlit-mic-recorder:**
-        1. **Dễ sử dụng:** Chỉ cần nhấn nút
-        2. **Popup tự động:** Trình duyệt tự hỏi cho phép micro
-        3. **Nghe lại được:** Có thể nghe lại trước khi chuyển text
-        4. **Mobile friendly:** Hoạt động trên iOS Safari, Android Chrome
+        ### 📢 **Phản ánh An ninh:**
+        1. **Điền thông tin** sự việc
+        2. **Dùng ghi âm** để nhập nhanh
+        3. **Nhấn GỬI PHẢN ÁNH** để gửi
         
-        **Cách sử dụng:**
+        ### 🎤 **Cách dùng streamlit-mic-recorder:**
         1. **Nhấn 🎤 Bắt đầu ghi âm**
         2. **Cho phép micro** khi trình duyệt hỏi
         3. **Nói nội dung** của bạn
         4. **Nhấn ⏹️ Dừng ghi âm** khi xong
         5. **Nghe lại** nếu cần
         6. **Nhấn 📝 Chuyển thành văn bản** để nhận diện
-        
-        **Lưu ý:**
-        - Cần **speech_recognition** để chuyển audio thành text
-        - File audio **không lưu** trên server
-        - Hỗ trợ **tiếng Việt** tốt
         """)
 
 # ================ CHẠY ỨNG DỤNG ================
