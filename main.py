@@ -1,9 +1,18 @@
 """
 🏛️ HỆ THỐNG TIẾP NHẬN PHẢN ÁNH & TƯ VẤN CỘNG ĐỒNG
-TÍCH HỢP GIỌNG NÓI - DÙNG STREAMLIT-AUDIORECORDER (GHI ÂM DÀI ỔN ĐỊNH)
+TÍCH HỢP GIỌNG NÓI - DÙNG STREAMLIT-AUDIORECORDER
 """
 
+# ================ CẤU HÌNH TRANG (PHẢI ĐẦU TIÊN) ================
 import streamlit as st
+st.set_page_config(
+    page_title="Cổng Tiếp Nhận Phản Ánh Cộng Đồng",
+    page_icon="🏛️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ================ IMPORT CÁC THƯ VIỆN KHÁC ================
 import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
@@ -41,31 +50,27 @@ def format_vietnam_time(dt, format_str='%H:%M %d/%m/%Y'):
     
     return dt.strftime(format_str)
 
-# ================ IMPORT THƯ VIỆN AUDIO MỚI ================
+# ================ IMPORT THƯ VIỆN AUDIO ================
 AUDIORECORDER_AVAILABLE = False
 SPEECH_AVAILABLE = False
 
 try:
     from audiorecorder import audiorecorder
     AUDIORECORDER_AVAILABLE = True
-    st.success("✅ streamlit-audiorecorder đã sẵn sàng (hỗ trợ ghi âm dài)")
 except ImportError as e:
     AUDIORECORDER_AVAILABLE = False
-    st.warning("⚠️ Thư viện audiorecorder chưa cài đặt. Vui lòng chạy: pip install streamlit-audiorecorder")
 
 try:
     import speech_recognition as sr
     SPEECH_AVAILABLE = True
 except ImportError:
     SPEECH_AVAILABLE = False
-    st.warning("⚠️ Thư viện speech_recognition chưa cài đặt. Vui lòng chạy: pip install SpeechRecognition")
 
 try:
     from pydub import AudioSegment
     PYDUB_AVAILABLE = True
 except ImportError:
     PYDUB_AVAILABLE = False
-    st.warning("⚠️ Thư viện pydub chưa cài đặt. Vui lòng chạy: pip install pydub")
 
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -78,15 +83,7 @@ except ImportError:
 # ================ CẤU HÌNH DATABASE ================
 DB_PATH = 'community_app.db'
 
-# ================ CẤU HÌNH TRANG ================
-st.set_page_config(
-    page_title="Cổng Tiếp Nhận Phản Ánh Cộng Đồng",
-    page_icon="🏛️",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# ================ CSS STYLING MỚI ================
+# ================ CSS STYLING ================
 st.markdown("""
 <style>
     .main-header {
@@ -196,16 +193,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ================ HÀM XỬ LÝ AUDIO MỚI ================
+# ================ HÀM XỬ LÝ AUDIO ================
 def process_audio_to_text(audio_bytes, language='vi-VN'):
-    """Xử lý audio bytes thành văn bản - TỐI ƯU CHO GHI ÂM DÀI"""
+    """Xử lý audio bytes thành văn bản"""
     if not SPEECH_AVAILABLE:
         return None, "Thư viện speech_recognition chưa cài đặt"
     
     try:
         recognizer = sr.Recognizer()
         
-        # Tạo file WAV tạm thời với đúng định dạng
         import tempfile
         
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
@@ -214,39 +210,28 @@ def process_audio_to_text(audio_bytes, language='vi-VN'):
         
         try:
             # Xử lý file audio lớn bằng pydub nếu có
-            if PYDUB_AVAILABLE and len(audio_bytes) > 1000000:  # > 1MB
-                # Chia nhỏ file audio nếu quá lớn
+            if PYDUB_AVAILABLE and len(audio_bytes) > 1000000:
                 audio = AudioSegment.from_wav(tmp_path)
                 
-                # Giới hạn tối đa 2 phút để xử lý
-                max_duration = 120 * 1000  # 120 giây (2 phút)
+                max_duration = 120 * 1000
                 if len(audio) > max_duration:
                     st.info(f"⏱️ Audio dài {len(audio)/1000:.1f}s. Chỉ xử lý 2 phút đầu tiên.")
                     audio = audio[:max_duration]
                 
-                # Chuyển về mono và 16kHz để tăng độ chính xác
                 audio = audio.set_channels(1)
                 audio = audio.set_frame_rate(16000)
                 
-                # Lưu file đã xử lý
                 processed_path = tmp_path + "_processed.wav"
                 audio.export(processed_path, format="wav")
                 
                 os.unlink(tmp_path)
                 tmp_path = processed_path
             
-            # Nhận diện giọng nói
             with sr.AudioFile(tmp_path) as source:
-                # Điều chỉnh nhiễu nền
                 recognizer.adjust_for_ambient_noise(source, duration=0.5)
-                
-                # Đọc toàn bộ audio
                 audio_data = recognizer.record(source)
-                
-                # Sử dụng Google Speech Recognition
                 text = recognizer.recognize_google(audio_data, language=language)
                 
-                # Dọn dẹp
                 os.unlink(tmp_path)
                 return text, None
                 
@@ -264,7 +249,6 @@ def process_audio_to_text(audio_bytes, language='vi-VN'):
             return None, f"Lỗi xử lý audio: {str(e)}"
             
     except Exception as e:
-        # Dọn dẹp file tạm nếu có
         if 'tmp_path' in locals() and os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
@@ -273,7 +257,7 @@ def process_audio_to_text(audio_bytes, language='vi-VN'):
         return None, f"Lỗi hệ thống: {str(e)}"
 
 def create_audio_recorder_component(key_suffix, label="Ghi âm", max_duration=300):
-    """Tạo component ghi âm với streamlit-audiorecorder (hỗ trợ ghi âm dài)"""
+    """Tạo component ghi âm với streamlit-audiorecorder"""
     if not AUDIORECORDER_AVAILABLE:
         st.warning("⚠️ Thư viện streamlit-audiorecorder chưa khả dụng")
         st.info("Vui lòng cài đặt: `pip install streamlit-audiorecorder`")
@@ -283,7 +267,6 @@ def create_audio_recorder_component(key_suffix, label="Ghi âm", max_duration=30
         st.markdown(f"<div class='audio-recorder-container'>", unsafe_allow_html=True)
         st.markdown(f"### 🎤 {label}")
         
-        # Thông tin hướng dẫn
         st.markdown(f"""
         <div class="audio-info">
         <strong>📋 Hướng dẫn ghi âm dài (tối đa {max_duration//60} phút):</strong><br>
@@ -294,7 +277,6 @@ def create_audio_recorder_component(key_suffix, label="Ghi âm", max_duration=30
         </div>
         """, unsafe_allow_html=True)
         
-        # Component ghi âm mới
         audio = audiorecorder(
             "▶️ Bắt đầu ghi âm", 
             "⏹️ Dừng ghi âm",
@@ -304,24 +286,18 @@ def create_audio_recorder_component(key_suffix, label="Ghi âm", max_duration=30
         )
         
         if audio is not None and len(audio) > 0:
-            # Hiển thị thông tin audio
-            duration_seconds = len(audio) / 1000.0  # Convert ms to seconds
+            duration_seconds = len(audio) / 1000.0
             st.markdown(f"<div class='audio-duration'>⏱️ Thời lượng: {duration_seconds:.1f} giây</div>", unsafe_allow_html=True)
             
-            # Hiển thị player
             st.audio(audio.export().read(), format="audio/wav")
             
-            # Lưu audio vào session state để xử lý
             audio_key = f"audio_{key_suffix}"
             st.session_state[audio_key] = audio
             
-            # Nút chuyển đổi giọng nói thành văn bản
             if st.button(f"📝 Chuyển giọng nói thành văn bản", key=f"convert_{key_suffix}"):
                 with st.spinner("Đang xử lý và chuyển giọng nói thành văn bản..."):
-                    # Export audio to bytes
                     audio_bytes = audio.export().read()
                     
-                    # Xử lý audio
                     text, error = process_audio_to_text(audio_bytes)
                     
                     if text:
@@ -334,21 +310,6 @@ def create_audio_recorder_component(key_suffix, label="Ghi âm", max_duration=30
         
         st.markdown("</div>", unsafe_allow_html=True)
     return None
-
-def get_audio_duration_info(audio):
-    """Lấy thông tin thời lượng audio"""
-    if audio is None or len(audio) == 0:
-        return "0 giây"
-    
-    duration_ms = len(audio)
-    duration_seconds = duration_ms / 1000.0
-    
-    if duration_seconds < 60:
-        return f"{duration_seconds:.1f} giây"
-    else:
-        minutes = int(duration_seconds // 60)
-        seconds = duration_seconds % 60
-        return f"{minutes} phút {seconds:.1f} giây"
 
 # ================ HIỂN THỊ GIỜ VIỆT NAM ================
 def show_vietnam_time():
@@ -491,7 +452,7 @@ def handle_security_report(title, description, location, incident_time):
 
 # ================ HÀM DIỄN ĐÀN ================
 def save_forum_post(content, category):
-    """Lưu bài đăng diễn đàn (không cần tiêu đề)"""
+    """Lưu bài đăng diễn đàn"""
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -767,24 +728,14 @@ def main():
                 st.rerun()
             return
         
-        # ========== COMPONENT GHI ÂM MỚI ==========
+        # ========== COMPONENT GHI ÂM ==========
         if AUDIORECORDER_AVAILABLE:
             st.markdown("### 🎤 Ghi âm mô tả sự việc (hỗ trợ ghi âm dài)")
-            st.info("""
-            **🎯 Ưu điểm của ghi âm mới:**
-            - ✅ **Ghi âm dài 5+ phút** không bị lỗi
-            - ✅ **Format WAV chuẩn**, không bị "bad format"
-            - ✅ **Tạm dừng/tiếp tục** khi ghi âm
-            - ✅ **Hiển thị thời lượng** chính xác
-            - ✅ **Xử lý nhiễu** tốt hơn
-            """)
-            
-            # Component ghi âm mới
             desc_text = create_audio_recorder_component("description", "Mô tả sự việc", max_duration=300)
             if desc_text:
                 st.session_state.speech_texts['description'] = desc_text
         
-        # FORM PHẢN ÁNH - CHỈ CÒN MÔ TẢ
+        # FORM PHẢN ÁNH
         with st.form("security_report_form", clear_on_submit=False):
             # Mô tả chi tiết
             desc_value = st.session_state.form_data['description']
@@ -794,7 +745,7 @@ def main():
             description = st.text_area(
                 "MÔ TẢ SỰ VIỆC *",
                 height=150,
-                placeholder="Mô tả đầy đủ sự việc, đối tượng, phương tiện, thiệt hại...\nVí dụ: Tôi thấy có 2 thanh niên lạ mặt đang cố mở khóa xe máy trước cửa nhà số 5 đường ABC vào khoảng 20h tối nay...",
+                placeholder="Mô tả đầy đủ sự việc, đối tượng, phương tiện, thiệt hại...",
                 value=desc_value,
                 key="report_description_input"
             )
@@ -819,9 +770,6 @@ def main():
                     st.error("⚠️ Vui lòng mô tả sự việc!")
                 else:
                     with st.spinner("Đang xử lý phản ánh..."):
-                        submit_time = get_vietnam_time()
-                        
-                        # Tạo tiêu đề tự động từ mô tả
                         title = f"Phản ánh: {description[:50]}..." if len(description) > 50 else f"Phản ánh: {description}"
                         
                         report_id, email_success, email_message = handle_security_report(
@@ -829,7 +777,6 @@ def main():
                         )
                         
                         if report_id:
-                            # Đánh dấu đã submit
                             st.session_state.form_submitted = True
                             st.rerun()
                         else:
@@ -846,12 +793,11 @@ def main():
             if st.button("📝 Đặt câu hỏi mới", type="primary", key="new_question_btn"):
                 st.session_state.show_new_question = not st.session_state.show_new_question
         
-        # Form đặt câu hỏi mới - KHÔNG CÓ TIÊU ĐỀ
+        # Form đặt câu hỏi mới
         if st.session_state.show_new_question:
             with st.expander("✍️ ĐẶT CÂU HỎI MỚI", expanded=True):
-                # Thêm tính năng ghi âm cho diễn đàn
                 if AUDIORECORDER_AVAILABLE:
-                    st.markdown("### 🎤 Ghi âm câu hỏi (hỗ trợ ghi âm dài)")
+                    st.markdown("### 🎤 Ghi âm câu hỏi")
                     
                     forum_content_text = create_audio_recorder_component("forum_content", "Nội dung câu hỏi", max_duration=180)
                     if forum_content_text:
@@ -862,7 +808,6 @@ def main():
                                             ["Hỏi đáp pháp luật", "Giải quyết mâu thuẫn", 
                                              "Tư vấn thủ tục", "An ninh trật tự", "Khác"])
                     
-                    # Nội dung câu hỏi - KHÔNG CÓ TIÊU ĐỀ
                     q_content_value = st.session_state.forum_form_data.get('content', '')
                     if 'speech_texts' in st.session_state and 'forum_content' in st.session_state.speech_texts:
                         q_content_value = st.session_state.speech_texts['forum_content']
@@ -870,7 +815,7 @@ def main():
                     q_content = st.text_area(
                         "NỘI DUNG CÂU HỎI *",
                         height=150,
-                        placeholder="Mô tả rõ vấn đề bạn đang gặp phải...\nVí dụ: Tôi muốn hỏi về thủ tục đăng ký tạm trú cho người thân từ tỉnh khác đến...",
+                        placeholder="Mô tả rõ vấn đề bạn đang gặp phải...",
                         value=q_content_value,
                         key="q_content_input"
                     )
@@ -933,16 +878,11 @@ def main():
             
             for idx, post in df_posts.iterrows():
                 status_badge = "✅ Đã trả lời" if post['is_answered'] else "⏳ Chờ trả lời"
-                badge_color = "#28a745" if post['is_answered'] else "#ffc107"
                 
-                # Hiển thị không có tiêu đề, chỉ chủ đề và thời gian
                 with st.expander(f"**{post['category']}** - {post['formatted_date']} • {status_badge}", expanded=False):
                     st.markdown(f"""
                     <div style="margin-bottom: 1rem;">
-                        <strong>👤 {post['anonymous_id']}</strong> • 
-                        <span style="background-color: {badge_color}; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.8em;">
-                            {status_badge}
-                        </span>
+                        <strong>👤 {post['anonymous_id']}</strong> • {status_badge}
                     </div>
                     <div style="background: #f8f9fa; padding: 1rem; border-radius: 5px; margin-bottom: 1rem;">
                         {post['content']}
@@ -967,10 +907,10 @@ def main():
                     else:
                         st.info("Chưa có bình luận nào.")
                     
-                    # Form bình luận cho công an VỚI GHI ÂM
+                    # Form bình luận cho công an
                     if st.session_state.police_user:
                         if AUDIORECORDER_AVAILABLE:
-                            st.markdown("### 🎤 Ghi âm trả lời (hỗ trợ ghi âm dài)")
+                            st.markdown("### 🎤 Ghi âm trả lời")
                             reply_audio_text = create_audio_recorder_component(
                                 f"reply_audio_{post['id']}", 
                                 "Trả lời bằng giọng nói", 
@@ -980,7 +920,6 @@ def main():
                                 st.session_state.speech_texts[f'reply_{post["id"]}'] = reply_audio_text
                         
                         with st.form(f"reply_form_{post['id']}"):
-                            # Nội dung bình luận
                             reply_content_value = ""
                             if 'speech_texts' in st.session_state and f'reply_{post["id"]}' in st.session_state.speech_texts:
                                 reply_content_value = st.session_state.speech_texts[f'reply_{post["id"]}']
@@ -1053,48 +992,14 @@ def main():
         
         st.markdown("### 🎤 **Hệ thống Ghi âm Mới**")
         st.info("""
-        **🚀 Ưu điểm vượt trội của streamlit-audiorecorder:**
+        **🚀 Ưu điểm của streamlit-audiorecorder:**
         
         ✅ **Ghi âm dài:** Hỗ trợ 5+ phút không bị lỗi
-        ✅ **Format chuẩn:** WAV đúng chuẩn, không bị "bad format"
-        ✅ **Chất lượng cao:** Xử lý nhiễu tốt, âm thanh rõ ràng
-        ✅ **Tạm dừng:** Có thể tạm dừng và tiếp tục khi ghi
+        ✅ **Format chuẩn:** WAV đúng chuẩn
+        ✅ **Chất lượng cao:** Xử lý nhiễu tốt
+        ✅ **Tạm dừng:** Có thể tạm dừng và tiếp tục
         ✅ **Hiển thị:** Hiển thị thời lượng và visualizer
-        ✅ **Dễ sử dụng:** Interface thân thiện
-        
-        **📋 Cách sử dụng:**
-        1. **Nhấn ▶️ Bắt đầu** để bắt đầu ghi âm
-        2. **Nói rõ ràng** vào micro
-        3. **Nhấn ⏸️ Tạm dừng** nếu cần nghỉ
-        4. **Nhấn ⏹️ Dừng** khi hoàn thành
-        5. **Nghe lại** bản ghi âm
-        6. **Nhấn 📝 Chuyển thành văn bản** để nhận diện
         """)
-        
-        st.markdown("### 📢 **Phản ánh An ninh:**")
-        st.info("""
-        1. **Mô tả sự việc** (chỉ cần 1 mục)
-        2. **Dùng ghi âm** để nhập nhanh
-        3. **Nhấn GỬI PHẢN ÁNH** để gửi
-        """)
-        
-        st.markdown("### 💬 **Diễn đàn:**")
-        st.info("""
-        1. **Chọn chủ đề** câu hỏi
-        2. **Nhập hoặc ghi âm** nội dung câu hỏi
-        3. **Chỉ công an** được trả lời
-        4. **Có thể ghi âm** để trả lời
-        """)
-        
-        # Hiển thị thông tin cài đặt
-        st.markdown("### ⚙️ **Thông tin cài đặt:**")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.code("pip install streamlit-audiorecorder", language="bash")
-        with col2:
-            st.code("pip install SpeechRecognition", language="bash")
-        with col3:
-            st.code("pip install pydub", language="bash")
 
 # ================ CHẠY ỨNG DỤNG ================
 if __name__ == "__main__":
