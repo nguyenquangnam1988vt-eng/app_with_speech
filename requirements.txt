@@ -5,9 +5,6 @@ sendgrid==6.10.0
 python-dotenv==1.0.0
 pytz==2025.2
 SpeechRecognition==3.10.0
-streamlit-mic-recorder==0.0.8
-
-# Thêm cho streamlit-audiorecorder
 streamlit-audiorecorder==0.0.6
 pydub==0.25.1
 numpy==1.24.0
