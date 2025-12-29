@@ -1,6 +1,6 @@
 """
 🏛️ HỆ THỐNG TIẾP NHẬN PHẢN ÁNH & TƯ VẤN CỘNG ĐỒNG
-TÍCH HỢP GIỌNG NÓI - DÙNG STREAMLIT-MIC-RECORDER (DỄ DÀNG)
+ĐƠN GIẢN - DỄ DÙNG CHO NGƯỜI LỚN TUỔI
 """
 
 import streamlit as st
@@ -155,21 +155,71 @@ st.markdown("""
         border: 2px solid #3B82F6;
         margin: 10px 0;
     }
-    .recorder-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr 1fr;
-        gap: 15px;
-        margin-bottom: 20px;
-    }
     .form-clear-button {
         margin-top: 10px;
+    }
+    .large-text {
+        font-size: 1.2rem !important;
+    }
+    .simple-form {
+        background: white;
+        padding: 2rem;
+        border-radius: 10px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    .section-title {
+        color: #1E3A8A;
+        font-size: 1.5rem;
+        margin-bottom: 1.5rem;
+        border-bottom: 3px solid #3B82F6;
+        padding-bottom: 0.5rem;
+    }
+    .mic-button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        padding: 15px 25px;
+        border-radius: 10px;
+        font-size: 1.2rem;
+        font-weight: bold;
+        cursor: pointer;
+        width: 100%;
+        margin: 10px 0;
+        transition: all 0.3s;
+    }
+    .mic-button:hover {
+        transform: scale(1.02);
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    }
+    .record-status {
+        text-align: center;
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 5px;
+        font-weight: bold;
+    }
+    .recording {
+        background: #ffebee;
+        color: #c62828;
+        border: 2px solid #c62828;
+    }
+    .stopped {
+        background: #e8f5e8;
+        color: #2e7d32;
+        border: 2px solid #2e7d32;
+    }
+    .audio-container {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        margin: 10px 0;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ================ HÀM XỬ LÝ AUDIO ================
+# ================ HÀM XỬ LÝ AUDIO ĐƠN GIẢN ================
 def process_audio_to_text(audio_bytes, language='vi-VN'):
-    """Xử lý audio bytes thành văn bản"""
+    """Xử lý audio bytes thành văn bản (tự động chuyển)"""
     if not SPEECH_AVAILABLE:
         return None, "Thư viện speech_recognition chưa cài đặt"
     
@@ -200,42 +250,52 @@ def process_audio_to_text(audio_bytes, language='vi-VN'):
     except Exception as e:
         return None, f"Lỗi xử lý audio: {str(e)}"
 
-def create_mic_recorder_component(key_suffix, label="Ghi âm", container=None):
-    """Tạo component ghi âm với streamlit-mic-recorder"""
+def create_simple_mic_recorder(label="Ghi âm", key_suffix="default"):
+    """Tạo component ghi âm đơn giản - tự động chuyển thành văn bản"""
     if not MIC_RECORDER_AVAILABLE:
-        if container:
-            container.warning("⚠️ Thư viện streamlit-mic-recorder chưa khả dụng")
-        return None
+        st.warning("⚠️ Thư viện streamlit-mic-recorder chưa khả dụng")
+        return None, None
     
-    # Tạo container nếu không có
-    if not container:
-        container = st.container()
-    
-    with container:
+    with st.container():
         st.markdown(f"<div class='mic-recorder-container'>", unsafe_allow_html=True)
-        st.markdown(f"### 🎤 {label}")
+        st.markdown(f"<h3>🎤 {label}</h3>", unsafe_allow_html=True)
         
+        # Trạng thái ghi âm
+        status_placeholder = st.empty()
+        
+        # Nút ghi âm
         audio = mic_recorder(
-            start_prompt=f"🎤 Bắt đầu ghi âm",
-            stop_prompt="⏹️ Dừng ghi âm",
-            key=f"recorder_{key_suffix}",
-            format="wav"
+            start_prompt=f"🎤 BẮT ĐẦU GHI ÂM",
+            stop_prompt="⏹️ DỪNG GHI ÂM",
+            key=f"simple_recorder_{key_suffix}",
+            format="wav",
+            just_once=True
         )
         
+        result_text = None
+        
         if audio:
-            st.audio(audio['bytes'], format="audio/wav")
+            # Hiển thị trạng thái đã ghi âm xong
+            status_placeholder.markdown(
+                "<div class='record-status stopped'>✅ Đã ghi âm xong. Đang chuyển thành văn bản...</div>", 
+                unsafe_allow_html=True
+            )
             
-            if st.button(f"📝 Chuyển thành văn bản", key=f"convert_{key_suffix}"):
-                with st.spinner("Đang chuyển giọng nói thành văn bản..."):
-                    text, error = process_audio_to_text(audio['bytes'])
-                    if text:
-                        st.success(f"✅ **Kết quả:** {text}")
-                        return text
-                    elif error:
-                        st.error(f"❌ {error}")
+            # Tự động chuyển thành văn bản
+            with st.spinner("Đang chuyển giọng nói thành văn bản..."):
+                text, error = process_audio_to_text(audio['bytes'])
+                if text:
+                    result_text = text
+                    st.success(f"✅ **Đã chuyển thành văn bản thành công!**")
+                    # Hiển thị kết quả
+                    st.markdown(f"**Kết quả:**")
+                    st.info(text)
+                elif error:
+                    st.error(f"❌ {error}")
         
         st.markdown("</div>", unsafe_allow_html=True)
-    return None
+    
+    return result_text, audio
 
 # ================ HIỂN THỊ GIỜ VIỆT NAM ================
 def show_vietnam_time():
@@ -272,7 +332,7 @@ def init_database():
         c.execute('''
             CREATE TABLE IF NOT EXISTS forum_posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
+                title TEXT DEFAULT 'Câu hỏi từ người dân',
                 content TEXT NOT NULL,
                 category TEXT DEFAULT 'Hỏi đáp pháp luật',
                 anonymous_id TEXT NOT NULL,
@@ -377,8 +437,8 @@ def handle_security_report(title, description, location, incident_time):
     return report_id, email_success, email_message
 
 # ================ HÀM DIỄN ĐÀN ================
-def save_forum_post(title, content, category):
-    """Lưu bài đăng diễn đàn"""
+def save_forum_post(content, category):
+    """Lưu bài đăng diễn đàn (không cần tiêu đề)"""
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -388,7 +448,7 @@ def save_forum_post(title, content, category):
         c.execute('''
             INSERT INTO forum_posts (title, content, category, anonymous_id)
             VALUES (?, ?, ?, ?)
-        ''', (title, content, category, anonymous_id))
+        ''', ('Câu hỏi từ người dân', content, category, anonymous_id))
         
         conn.commit()
         post_id = c.lastrowid
@@ -526,14 +586,12 @@ def main():
         st.session_state.form_submitted = False
     if 'form_data' not in st.session_state:
         st.session_state.form_data = {
-            'title': '',
+            'description': '',
             'location': '',
-            'incident_time': '',
-            'description': ''
+            'incident_time': ''
         }
     if 'forum_form_data' not in st.session_state:
         st.session_state.forum_form_data = {
-            'title': '',
             'content': ''
         }
     if 'speech_texts' not in st.session_state:
@@ -546,7 +604,7 @@ def main():
         <h1>🏛️ CỔNG TIẾP NHẬN PHẢN ÁNH CỘNG ĐỒNG</h1>
         <p>Phản ánh an ninh • Hỏi đáp pháp luật • Ẩn danh hoàn toàn • Giờ Việt Nam: {format_vietnam_time(vietnam_now)}</p>
         <p><small>⚠️ <strong>Chỉ công an mới được bình luận và trả lời câu hỏi</strong></small></p>
-        <p><small>🎤 <strong>Giọng nói dễ dàng với streamlit-mic-recorder</strong></small></p>
+        <p><small>🎤 <strong>Ghi âm đơn giản - Tự động chuyển thành chữ</strong></small></p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -608,30 +666,13 @@ def main():
             conn.close()
         except:
             st.warning("Không thể kết nối database")
-        
-        # Thông tin tính năng
-        st.markdown("---")
-        if SENDGRID_AVAILABLE:
-            st.success("✅ SendGrid: Đã kết nối")
-        else:
-            st.warning("⚠️ SendGrid: Chưa cấu hình")
-        
-        if MIC_RECORDER_AVAILABLE:
-            st.success("🎤 Ghi âm: Sẵn sàng (streamlit-mic-recorder)")
-        else:
-            st.warning("🎤 Ghi âm: Chưa cài đặt streamlit-mic-recorder")
-        
-        if SPEECH_AVAILABLE:
-            st.success("📝 Nhận diện giọng nói: Sẵn sàng")
-        else:
-            st.warning("📝 Nhận diện giọng nói: Cần speech_recognition")
     
     # Main tabs
     tab1, tab2, tab3 = st.tabs(["📢 PHẢN ÁNH AN NINH", "💬 DIỄN ĐÀN", "ℹ️ THÔNG TIN"])
     
-    # ========= TAB 1: PHẢN ÁNH AN NINH =========
+    # ========= TAB 1: PHẢN ÁNH AN NINH (ĐƠN GIẢN) =========
     with tab1:
-        st.subheader("Biểu mẫu Phản ánh An ninh Trật tự")
+        st.markdown('<div class="section-title">📝 PHẢN ÁNH AN NINH TRẬT TỰ</div>', unsafe_allow_html=True)
         
         # Hiển thị thời gian hiện tại
         now_vn = get_vietnam_time()
@@ -645,147 +686,136 @@ def main():
             st.markdown(f"""
             <div class="success-box">
                 <h4>✅ ĐÃ TIẾP NHẬN PHẢN ÁNH</h4>
-                <p>Phản ánh đã được gửi đến Công an. Cảm ơn bạn đã đóng góp!</p>
+                <p>Phản ánh của bạn đã được gửi đến Công an thành công!</p>
                 <p><strong>Thời gian tiếp nhận:</strong> {format_vietnam_time(now_vn)}</p>
+                <p>Cảm ơn bạn đã đóng góp cho an ninh cộng đồng!</p>
             </div>
             """, unsafe_allow_html=True)
             
-            if st.button("📝 Tạo phản ánh mới", type="primary"):
+            if st.button("📝 Gửi phản ánh mới", type="primary", use_container_width=True):
                 st.session_state.form_submitted = False
                 st.session_state.form_data = {
-                    'title': '',
+                    'description': '',
                     'location': '',
-                    'incident_time': '',
-                    'description': ''
+                    'incident_time': ''
                 }
                 st.session_state.speech_texts = {}
                 st.rerun()
             return
         
-        # ========== COMPONENT GHI ÂM MỚI - FIX KHÔNG CÓ Ô TRỐNG ==========
-        if MIC_RECORDER_AVAILABLE:
-            st.markdown("### 🎤 Ghi âm dễ dàng với mic recorder")
-            
-            # Tạo 3 recorder components trong một grid - KHÔNG có ô trống
-            with st.container():
-                st.markdown('<div class="recorder-grid">', unsafe_allow_html=True)
-                
-                # Tạo 3 columns
-                col1, col2, col3 = st.columns(3)
-                
-                # Column 1: Tiêu đề
-                with col1:
-                    title_recorder = st.container()
-                
-                # Column 2: Địa điểm
-                with col2:
-                    location_recorder = st.container()
-                
-                # Column 3: Mô tả
-                with col3:
-                    desc_recorder = st.container()
-                
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Tạo các recorder components trong các containers riêng
-            with title_recorder:
-                title_text = create_mic_recorder_component("title", "Tiêu đề phản ánh", title_recorder)
-                if title_text:
-                    st.session_state.speech_texts['title'] = title_text
-            
-            with location_recorder:
-                location_text = create_mic_recorder_component("location", "Địa điểm", location_recorder)
-                if location_text:
-                    st.session_state.speech_texts['location'] = location_text
-            
-            with desc_recorder:
-                desc_text = create_mic_recorder_component("description", "Mô tả chi tiết", desc_recorder)
-                if desc_text:
-                    st.session_state.speech_texts['description'] = desc_text
-        
-        # FORM PHẢN ÁNH
+        # FORM PHẢN ÁNH ĐƠN GIẢN
         with st.form("security_report_form", clear_on_submit=False):
-            col1, col2 = st.columns(2)
+            st.markdown('<div class="simple-form">', unsafe_allow_html=True)
             
+            # Hướng dẫn đơn giản
+            st.markdown("""
+            ### 🎯 **CÁCH GỬI PHẢN ÁNH:**
+            1. **Nhập hoặc ghi âm** mô tả sự việc
+            2. **Chọn địa điểm** (nếu biết)
+            3. **Chọn thời gian** (nếu nhớ)
+            4. **Nhấn nút GỬI PHẢN ÁNH**
+            """)
+            
+            # Phần 1: MÔ TẢ SỰ VIỆC (BẮT BUỘC)
+            st.markdown("---")
+            st.markdown("### 1. MÔ TẢ SỰ VIỆC *")
+            
+            col1, col2 = st.columns([2, 1])
             with col1:
-                # Tiêu đề - tự động điền từ giọng nói
-                title_value = st.session_state.form_data['title']
-                if 'speech_texts' in st.session_state and 'title' in st.session_state.speech_texts:
-                    title_value = st.session_state.speech_texts['title']
-                
-                title = st.text_input(
-                    "Tiêu đề phản ánh *", 
-                    placeholder="Ví dụ: Mất trộm xe máy tại...",
-                    value=title_value,
-                    key="report_title_input"
+                st.markdown("**Nhập mô tả bằng văn bản:**")
+                description = st.text_area(
+                    "Mô tả chi tiết sự việc:",
+                    height=120,
+                    placeholder="Ví dụ: Tôi thấy có 2 thanh niên lạ mặt đang cố mở khóa xe máy trước cửa nhà số 5...",
+                    value=st.session_state.form_data['description'],
+                    key="report_description_input"
                 )
-                
-                # Cập nhật form data
-                st.session_state.form_data['title'] = title
-                
-                # Địa điểm
-                location_value = st.session_state.form_data['location']
-                if 'speech_texts' in st.session_state and 'location' in st.session_state.speech_texts:
-                    location_value = st.session_state.speech_texts['location']
-                
-                location = st.text_input(
-                    "Địa điểm", 
-                    placeholder="Số nhà, đường, phường/xã...",
-                    value=location_value,
-                    key="report_location_input"
-                )
-                
-                st.session_state.form_data['location'] = location
+                st.session_state.form_data['description'] = description
             
             with col2:
-                # Thời gian xảy ra
+                st.markdown("**Hoặc ghi âm (nói xong tự chuyển thành chữ):**")
+                if MIC_RECORDER_AVAILABLE:
+                    desc_audio_text, _ = create_simple_mic_recorder("Ghi âm mô tả", "description")
+                    if desc_audio_text:
+                        st.session_state.form_data['description'] = desc_audio_text
+                        st.session_state.speech_texts['description'] = desc_audio_text
+                        st.rerun()
+                else:
+                    st.warning("Chưa hỗ trợ ghi âm")
+            
+            # Phần 2: THÔNG TIN BỔ SUNG (KHÔNG BẮT BUỘC)
+            st.markdown("---")
+            st.markdown("### 2. THÔNG TIN BỔ SUNG (Nếu có)")
+            
+            col_loc, col_time = st.columns(2)
+            
+            with col_loc:
+                st.markdown("**Địa điểm xảy ra:**")
+                location = st.text_input(
+                    "Địa điểm (không bắt buộc)",
+                    placeholder="Ví dụ: Trước nhà số 5, đường ABC",
+                    value=st.session_state.form_data['location'],
+                    key="report_location_input"
+                )
+                st.session_state.form_data['location'] = location
+            
+            with col_time:
+                st.markdown("**Thời gian xảy ra:**")
                 incident_time = st.text_input(
-                    "Thời gian xảy ra", 
-                    placeholder=f"VD: {format_vietnam_time(now_vn, '%H:%M')} ngày {format_vietnam_time(now_vn, '%d/%m')}",
+                    "Thời gian (không bắt buộc)",
+                    placeholder=f"Ví dụ: {format_vietnam_time(now_vn, '%H:%M')} ngày {format_vietnam_time(now_vn, '%d/%m')}",
                     value=st.session_state.form_data['incident_time'],
                     key="report_time_input"
                 )
-                
                 st.session_state.form_data['incident_time'] = incident_time
             
-            # Mô tả chi tiết
-            desc_value = st.session_state.form_data['description']
-            if 'speech_texts' in st.session_state and 'description' in st.session_state.speech_texts:
-                desc_value = st.session_state.speech_texts['description']
+            st.markdown("</div>", unsafe_allow_html=True)
             
-            description = st.text_area(
-                "Mô tả chi tiết *",
-                height=150,
-                placeholder="Mô tả đầy đủ sự việc, đối tượng, phương tiện, thiệt hại...",
-                value=desc_value,
-                key="report_description_input"
-            )
+            # NÚT HÀNH ĐỘNG - LỚN VÀ RÕ RÀNG
+            st.markdown("---")
+            col1, col2, col3 = st.columns([2, 1, 1])
             
-            st.session_state.form_data['description'] = description
-            
-            # Nút submit và clear
-            col1, col2 = st.columns([3, 1])
             with col1:
-                submitted = st.form_submit_button("🚨 GỬI PHẢN ÁNH", use_container_width=True, type="primary")
-            with col2:
-                clear_form = st.form_submit_button("🗑️ Xóa form", use_container_width=True)
+                submit_button = st.form_submit_button(
+                    "🚨 **GỬI PHẢN ÁNH**",
+                    use_container_width=True,
+                    type="primary"
+                )
             
-            if clear_form:
+            with col2:
+                clear_button = st.form_submit_button(
+                    "🗑️ **XÓA NỘI DUNG**",
+                    use_container_width=True
+                )
+            
+            with col3:
+                cancel_button = st.form_submit_button(
+                    "↩️ **HỦY**",
+                    use_container_width=True
+                )
+            
+            if clear_button:
                 st.session_state.form_data = {
-                    'title': '',
+                    'description': '',
                     'location': '',
-                    'incident_time': '',
-                    'description': ''
+                    'incident_time': ''
                 }
                 st.session_state.speech_texts = {}
                 st.rerun()
             
-            if submitted:
-                if not title or not description:
-                    st.error("⚠️ Vui lòng điền tiêu đề và mô tả sự việc!")
+            if cancel_button:
+                st.session_state.form_submitted = False
+                st.rerun()
+            
+            if submit_button:
+                if not description:
+                    st.error("⚠️ Vui lòng mô tả sự việc!")
                 else:
                     with st.spinner("Đang xử lý phản ánh..."):
                         submit_time = get_vietnam_time()
+                        
+                        # Tạo tiêu đề tự động từ mô tả
+                        title = f"Phản ánh: {description[:50]}..." if len(description) > 50 else f"Phản ánh: {description}"
                         
                         report_id, email_success, email_message = handle_security_report(
                             title, description, location, incident_time
@@ -798,102 +828,90 @@ def main():
                         else:
                             st.error("❌ Lỗi lưu phản ánh. Vui lòng thử lại!")
     
-    # ========= TAB 2: DIỄN ĐÀN =========
+    # ========= TAB 2: DIỄN ĐÀN (ĐƠN GIẢN) =========
     with tab2:
         col1, col2 = st.columns([3, 1])
         
         with col1:
-            st.subheader("💬 Diễn đàn Hỏi đáp Pháp luật")
+            st.markdown('<div class="section-title">💬 HỎI ĐÁP PHÁP LUẬT</div>', unsafe_allow_html=True)
             st.info("⚠️ **Chỉ công an mới được bình luận và trả lời câu hỏi**")
         with col2:
-            if st.button("📝 Đặt câu hỏi mới", type="primary", key="new_question_btn"):
+            if st.button("📝 Đặt câu hỏi mới", type="primary", key="new_question_btn", use_container_width=True):
                 st.session_state.show_new_question = not st.session_state.show_new_question
         
-        # Form đặt câu hỏi mới VỚI GHI ÂM
+        # Form đặt câu hỏi mới ĐƠN GIẢN
         if st.session_state.show_new_question:
             with st.expander("✍️ ĐẶT CÂU HỎI MỚI", expanded=True):
-                # Thêm tính năng ghi âm cho diễn đàn
-                if MIC_RECORDER_AVAILABLE:
-                    st.markdown("### 🎤 Ghi âm cho câu hỏi")
-                    
-                    col_q1, col_q2 = st.columns(2)
-                    
-                    with col_q1:
-                        forum_title_text = create_mic_recorder_component("forum_title", "Tiêu đề câu hỏi")
-                        if forum_title_text:
-                            st.session_state.speech_texts['forum_title'] = forum_title_text
-                    
-                    with col_q2:
-                        forum_content_text = create_mic_recorder_component("forum_content", "Nội dung câu hỏi")
-                        if forum_content_text:
-                            st.session_state.speech_texts['forum_content'] = forum_content_text
-                
                 with st.form("new_question_form"):
-                    # Tiêu đề câu hỏi
-                    q_title_value = st.session_state.forum_form_data.get('title', '')
-                    if 'speech_texts' in st.session_state and 'forum_title' in st.session_state.speech_texts:
-                        q_title_value = st.session_state.speech_texts['forum_title']
+                    st.markdown("### 🎯 **CÁCH ĐẶT CÂU HỎI:**")
+                    st.markdown("1. **Chọn chủ đề** câu hỏi")
+                    st.markdown("2. **Nhập hoặc ghi âm** nội dung câu hỏi")
+                    st.markdown("3. **Nhấn ĐĂNG CÂU HỎI**")
                     
-                    q_title = st.text_input(
-                        "Tiêu đề câu hỏi *",
-                        placeholder="Nhập tiêu đề câu hỏi",
-                        value=q_title_value,
-                        key="q_title_input"
+                    # Chủ đề câu hỏi
+                    q_category = st.selectbox(
+                        "**Chọn chủ đề câu hỏi:**",
+                        ["Hỏi đáp pháp luật", "Giải quyết mâu thuẫn", 
+                         "Tư vấn thủ tục", "An ninh trật tự", "Khác"],
+                        key="q_category_select"
                     )
                     
-                    st.session_state.forum_form_data['title'] = q_title
+                    st.markdown("---")
+                    st.markdown("### **NỘI DUNG CÂU HỎI:**")
                     
-                    q_category = st.selectbox("Chủ đề *", 
-                                            ["Hỏi đáp pháp luật", "Giải quyết mâu thuẫn", 
-                                             "Tư vấn thủ tục", "An ninh trật tự", "Khác"])
+                    col_text, col_mic = st.columns([2, 1])
                     
-                    # Nội dung câu hỏi
-                    q_content_value = st.session_state.forum_form_data.get('content', '')
-                    if 'speech_texts' in st.session_state and 'forum_content' in st.session_state.speech_texts:
-                        q_content_value = st.session_state.speech_texts['forum_content']
+                    with col_text:
+                        q_content = st.text_area(
+                            "**Nhập câu hỏi bằng văn bản:**",
+                            height=120,
+                            placeholder="Ví dụ: Tôi muốn hỏi về thủ tục đăng ký tạm trú cho người thân từ tỉnh khác đến...",
+                            value=st.session_state.forum_form_data.get('content', ''),
+                            key="q_content_input"
+                        )
+                        st.session_state.forum_form_data['content'] = q_content
                     
-                    q_content = st.text_area(
-                        "Nội dung chi tiết *",
-                        height=150,
-                        placeholder="Mô tả rõ vấn đề bạn đang gặp phải...",
-                        value=q_content_value,
-                        key="q_content_input"
-                    )
+                    with col_mic:
+                        st.markdown("**Hoặc ghi âm câu hỏi:**")
+                        if MIC_RECORDER_AVAILABLE:
+                            forum_audio_text, _ = create_simple_mic_recorder("Ghi âm câu hỏi", "forum_content")
+                            if forum_audio_text:
+                                st.session_state.forum_form_data['content'] = forum_audio_text
+                                st.session_state.speech_texts['forum_content'] = forum_audio_text
+                                st.rerun()
+                        else:
+                            st.warning("Chưa hỗ trợ ghi âm")
                     
-                    st.session_state.forum_form_data['content'] = q_content
+                    # Nút hành động
+                    col_submit, col_clear, col_cancel = st.columns(3)
                     
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        submit_q = st.form_submit_button("📤 Đăng câu hỏi", use_container_width=True, type="primary")
-                    with col2:
-                        clear_q = st.form_submit_button("🗑️ Xóa nội dung", use_container_width=True)
-                    with col3:
-                        cancel_q = st.form_submit_button("❌ Hủy", use_container_width=True)
+                    with col_submit:
+                        submit_q = st.form_submit_button("📤 **ĐĂNG CÂU HỎI**", use_container_width=True, type="primary")
+                    
+                    with col_clear:
+                        clear_q = st.form_submit_button("🗑️ **XÓA**", use_container_width=True)
+                    
+                    with col_cancel:
+                        cancel_q = st.form_submit_button("❌ **HỦY**", use_container_width=True)
                     
                     if clear_q:
-                        st.session_state.forum_form_data = {'title': '', 'content': ''}
-                        if 'speech_texts' in st.session_state:
-                            if 'forum_title' in st.session_state.speech_texts:
-                                del st.session_state.speech_texts['forum_title']
-                            if 'forum_content' in st.session_state.speech_texts:
-                                del st.session_state.speech_texts['forum_content']
+                        st.session_state.forum_form_data = {'content': ''}
+                        if 'speech_texts' in st.session_state and 'forum_content' in st.session_state.speech_texts:
+                            del st.session_state.speech_texts['forum_content']
                         st.rerun()
                     
                     if submit_q:
-                        if not q_title or not q_content:
-                            st.error("Vui lòng điền tiêu đề và nội dung câu hỏi!")
+                        if not q_content:
+                            st.error("Vui lòng nhập nội dung câu hỏi!")
                         else:
-                            post_id, anon_id, error = save_forum_post(q_title, q_content, q_category)
+                            post_id, anon_id, error = save_forum_post(q_content, q_category)
                             if post_id:
                                 current_time = get_vietnam_time()
                                 st.success(f"✅ Câu hỏi đã đăng lúc {format_vietnam_time(current_time)}! (ID: {anon_id})")
                                 st.session_state.show_new_question = False
-                                st.session_state.forum_form_data = {'title': '', 'content': ''}
-                                if 'speech_texts' in st.session_state:
-                                    if 'forum_title' in st.session_state.speech_texts:
-                                        del st.session_state.speech_texts['forum_title']
-                                    if 'forum_content' in st.session_state.speech_texts:
-                                        del st.session_state.speech_texts['forum_content']
+                                st.session_state.forum_form_data = {'content': ''}
+                                if 'speech_texts' in st.session_state and 'forum_content' in st.session_state.speech_texts:
+                                    del st.session_state.speech_texts['forum_content']
                                 st.rerun()
                             else:
                                 st.error(f"❌ {error}")
@@ -902,14 +920,16 @@ def main():
                         st.session_state.show_new_question = False
                         st.rerun()
         
-        # Bộ lọc
+        # Bộ lọc và tìm kiếm
         st.markdown("---")
         col1, col2 = st.columns([2, 1])
         with col1:
-            filter_category = st.selectbox("Lọc theo chủ đề", 
-                                         ["Tất cả", "Hỏi đáp pháp luật", "Giải quyết mâu thuẫn", 
-                                          "Tư vấn thủ tục", "An ninh trật tự"],
-                                         key="filter_category")
+            filter_category = st.selectbox(
+                "Lọc theo chủ đề", 
+                ["Tất cả", "Hỏi đáp pháp luật", "Giải quyết mâu thuẫn", 
+                 "Tư vấn thủ tục", "An ninh trật tự"],
+                key="filter_category"
+            )
         with col2:
             search_term = st.text_input("Tìm kiếm...", key="search_term")
         
@@ -927,14 +947,13 @@ def main():
                 status_badge = "✅ Đã trả lời" if post['is_answered'] else "⏳ Chờ trả lời"
                 badge_color = "#28a745" if post['is_answered'] else "#ffc107"
                 
-                with st.expander(f"**{post['title']}** - {post['formatted_date']} • {status_badge}", expanded=False):
+                with st.expander(f"**{post['category']}** - {post['formatted_date']} • {status_badge}", expanded=False):
                     st.markdown(f"""
                     <div style="margin-bottom: 1rem;">
                         <strong>👤 {post['anonymous_id']}</strong> • 
                         <span style="background-color: {badge_color}; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.8em;">
                             {status_badge}
-                        </span> • 
-                        <strong>{post['category']}</strong>
+                        </span>
                     </div>
                     <div style="background: #f8f9fa; padding: 1rem; border-radius: 5px; margin-bottom: 1rem;">
                         {post['content']}
@@ -959,41 +978,41 @@ def main():
                     else:
                         st.info("Chưa có bình luận nào.")
                     
-                    # Form bình luận cho công an VỚI GHI ÂM
+                    # Form bình luận cho công an
                     if st.session_state.police_user:
-                        if MIC_RECORDER_AVAILABLE:
-                            st.markdown("### 🎤 Ghi âm bình luận")
-                            reply_audio_text = create_mic_recorder_component(f"reply_audio_{post['id']}", "Bình luận bằng giọng nói")
-                            if reply_audio_text:
-                                st.session_state.speech_texts[f'reply_{post["id"]}'] = reply_audio_text
-                        
                         with st.form(f"reply_form_{post['id']}"):
-                            # Nội dung bình luận
-                            reply_content_value = ""
-                            if 'speech_texts' in st.session_state and f'reply_{post["id"]}' in st.session_state.speech_texts:
-                                reply_content_value = st.session_state.speech_texts[f'reply_{post["id"]}']
+                            st.markdown("### **BÌNH LUẬN/TRẢ LỜI:**")
                             
-                            reply_content = st.text_area(
-                                "Bình luận của bạn:",
-                                height=80,
-                                placeholder="Viết câu trả lời hoặc ý kiến...",
-                                value=reply_content_value,
-                                key=f"reply_input_{post['id']}"
-                            )
+                            col_reply_text, col_reply_mic = st.columns([2, 1])
                             
-                            col1, col2 = st.columns([3, 1])
-                            with col1:
+                            with col_reply_text:
+                                reply_content = st.text_area(
+                                    "Nhập bình luận:",
+                                    height=80,
+                                    placeholder="Viết câu trả lời hoặc ý kiến...",
+                                    key=f"reply_input_{post['id']}"
+                                )
+                            
+                            with col_reply_mic:
+                                st.markdown("**Hoặc ghi âm:**")
+                                if MIC_RECORDER_AVAILABLE:
+                                    reply_audio_text, _ = create_simple_mic_recorder("Ghi âm trả lời", f"reply_{post['id']}")
+                                    if reply_audio_text:
+                                        # Cập nhật text area với nội dung ghi âm
+                                        reply_content = reply_audio_text
+                                        st.rerun()
+                            
+                            col_submit, col_clear = st.columns([3, 1])
+                            with col_submit:
                                 submitted_reply = st.form_submit_button(
-                                    f"👮 Trả lời ({st.session_state.police_user['display_name']})",
+                                    f"👮 **TRẢ LỜI** ({st.session_state.police_user['display_name']})",
                                     use_container_width=True,
                                     type="primary"
                                 )
-                            with col2:
-                                clear_reply = st.form_submit_button("🗑️ Xóa", use_container_width=True)
+                            with col_clear:
+                                clear_reply = st.form_submit_button("🗑️ **XÓA**", use_container_width=True)
                             
                             if clear_reply:
-                                if f'reply_{post["id"]}' in st.session_state.speech_texts:
-                                    del st.session_state.speech_texts[f'reply_{post["id"]}']
                                 st.rerun()
                             
                             if submitted_reply:
@@ -1009,8 +1028,6 @@ def main():
                                     
                                     if result[0]:
                                         st.success(f"✅ Đã gửi trả lời lúc {format_vietnam_time(get_vietnam_time())}!")
-                                        if f'reply_{post["id"]}' in st.session_state.speech_texts:
-                                            del st.session_state.speech_texts[f'reply_{post["id"]}']
                                         st.rerun()
                                     else:
                                         st.error(f"❌ {result[1]}")
@@ -1021,43 +1038,71 @@ def main():
     
     # ========= TAB 3: THÔNG TIN =========
     with tab3:
-        st.subheader("📖 Thông tin hệ thống")
+        st.markdown('<div class="section-title">📖 HƯỚNG DẪN SỬ DỤNG</div>', unsafe_allow_html=True)
         
         server_time = datetime.now()
         vietnam_time = get_vietnam_time()
         
-        col_time1, col_time2 = st.columns(2)
-        with col_time1:
-            st.markdown(f"""
-            ### 🕐 Thời gian hệ thống
-            **Server (UTC):** {server_time.strftime('%H:%M:%S %d/%m/%Y')}
+        st.info(f"""
+        ### 🕐 **THỜI GIAN HIỆN TẠI:**
+        - **Giờ Việt Nam:** {format_vietnam_time(vietnam_time, '%H:%M:%S %d/%m/%Y')}
+        - **Múi giờ:** UTC+7 (Asia/Ho_Chi_Minh)
+        """)
+        
+        # Hướng dẫn bằng hình ảnh đơn giản
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            ### 📢 **GỬI PHẢN ÁNH AN NINH:**
+            
+            **Bước 1:** Mô tả sự việc
+            - Nhập chữ **HOẶC** nhấn 🎤 ghi âm
+            - Nói rõ ràng, chậm rãi
+            - Tự động chuyển thành chữ
+            
+            **Bước 2:** Thông tin bổ sung (nếu có)
+            - Địa điểm xảy ra
+            - Thời gian xảy ra
+            
+            **Bước 3:** Nhấn **GỬI PHẢN ÁNH**
+            - Hệ thống tự động tiếp nhận
+            - Báo cáo đến Công an
             """)
-        with col_time2:
-            st.markdown(f"""
-            ### 🇻🇳 Giờ Việt Nam
-            **Hiện tại:** {format_vietnam_time(vietnam_time, '%H:%M:%S %d/%m/%Y')}
-            **Múi giờ:** UTC+7 (Asia/Ho_Chi_Minh)
+        
+        with col2:
+            st.markdown("""
+            ### 💬 **ĐẶT CÂU HỎI PHÁP LUẬT:**
+            
+            **Bước 1:** Chọn chủ đề
+            - Hỏi đáp pháp luật
+            - Giải quyết mâu thuẫn
+            - Tư vấn thủ tục
+            - An ninh trật tự
+            
+            **Bước 2:** Nội dung câu hỏi
+            - Nhập chữ **HOẶC** nhấn 🎤 ghi âm
+            - Nói rõ câu hỏi của bạn
+            - Tự động chuyển thành chữ
+            
+            **Bước 3:** Nhấn **ĐĂNG CÂU HỎI**
+            - Ẩn danh hoàn toàn
+            - Chỉ Công an được trả lời
             """)
         
-        st.info("""
-        ### 📢 **Phản ánh An ninh:**
-        1. **Điền thông tin** sự việc
-        2. **Dùng ghi âm** để nhập nhanh
-        3. **Nhấn GỬI PHẢN ÁNH** để gửi
+        st.markdown("---")
+        st.markdown("""
+        ### 🎤 **HƯỚNG DẪN GHI ÂM:**
+        1. **Nhấn nút 🎤 BẮT ĐẦU GHI ÂM**
+        2. **Nói** nội dung của bạn
+        3. **Nhấn ⏹️ DỪNG GHI ÂM** khi xong
+        4. **Hệ thống tự động** chuyển thành chữ
         
-        ### 🎤 **Cách dùng streamlit-mic-recorder:**
-        1. **Nhấn 🎤 Bắt đầu ghi âm**
-        2. **Cho phép micro** khi trình duyệt hỏi
-        3. **Nói nội dung** của bạn
-        4. **Nhấn ⏹️ Dừng ghi âm** khi xong
-        5. **Nghe lại** nếu cần
-        6. **Nhấn 📝 Chuyển thành văn bản** để nhận diện
-        
-        ### 💬 **Diễn đàn:**
-        1. **Đặt câu hỏi** ẩn danh
-        2. **Dùng ghi âm** để hỏi nhanh
-        3. **Chỉ công an** được trả lời
-        4. **Có thể ghi âm** để trả lời
+        ### ⚠️ **LƯU Ý QUAN TRỌNG:**
+        - **Không cần đăng ký** tài khoản
+        - **Ẩn danh** hoàn toàn
+        - **Chỉ Công an** được trả lời câu hỏi
+        - Phản ánh được **báo cáo ngay** đến Công an
         """)
 
 # ================ CHẠY ỨNG DỤNG ================
