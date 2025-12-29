@@ -1,5 +1,5 @@
 """
-🏛️ HỆ THỐNG TIẾP NHẬN PHẢN ÁNH & TƯ VẾN CỘNG ĐỒNG
+🏛️ HỆ THỐNG TIẾP NHẬN PHẢN ÁNH & TƯ VẤN CỘNG ĐỒNG
 ĐƠN GIẢN - DỄ DÙNG CHO NGƯỜI LỚN TUỔI
 """
 
@@ -173,23 +173,6 @@ st.markdown("""
         margin-bottom: 1.5rem;
         border-bottom: 3px solid #3B82F6;
         padding-bottom: 0.5rem;
-    }
-    .record-status {
-        text-align: center;
-        padding: 10px;
-        margin: 10px 0;
-        border-radius: 5px;
-        font-weight: bold;
-    }
-    .recording {
-        background: #ffebee;
-        color: #c62828;
-        border: 2px solid #c62828;
-    }
-    .stopped {
-        background: #e8f5e8;
-        color: #2e7d32;
-        border: 2px solid #2e7d32;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -518,8 +501,12 @@ def main():
         st.session_state.form_data = {'description': ''}
     if 'forum_form_data' not in st.session_state:
         st.session_state.forum_form_data = {'content': ''}
-    if 'audio_processed' not in st.session_state:
-        st.session_state.audio_processed = {'report': False, 'forum': False}
+    if 'audio_to_process' not in st.session_state:
+        st.session_state.audio_to_process = None
+    if 'processed_text' not in st.session_state:
+        st.session_state.processed_text = None
+    if 'processing_audio' not in st.session_state:
+        st.session_state.processing_audio = False
     
     # Header với thời gian VN
     vietnam_now = get_vietnam_time()
@@ -619,7 +606,7 @@ def main():
             if st.button("📝 Gửi phản ánh mới", type="primary", use_container_width=True):
                 st.session_state.form_submitted = False
                 st.session_state.form_data = {'description': ''}
-                st.session_state.audio_processed['report'] = False
+                st.session_state.processed_text = None
                 st.rerun()
             return
         
@@ -647,6 +634,9 @@ def main():
                 key="report_description_input"
             )
             
+            # Lưu vào session state
+            st.session_state.form_data['description'] = description
+            
             st.markdown("**HOẶC**")
             
             # Ghi âm tự động cho phản ánh
@@ -656,7 +646,7 @@ def main():
                 with st.container():
                     st.markdown('<div class="mic-recorder-container">', unsafe_allow_html=True)
                     
-                    # Tạo recorder
+                    # Tạo recorder với callback
                     audio = mic_recorder(
                         start_prompt="🎤 BẮT ĐẦU GHI ÂM",
                         stop_prompt="⏹️ DỪNG GHI ÂM",
@@ -664,25 +654,42 @@ def main():
                         format="wav"
                     )
                     
-                    # Xử lý audio khi có dữ liệu
+                    # Xử lý audio khi có dữ liệu - TRICK: Dùng một nút ẩn để trigger
                     if audio is not None:
-                        # Chỉ xử lý nếu chưa xử lý lần nào
-                        if not st.session_state.audio_processed['report']:
-                            with st.spinner("Đang chuyển giọng nói thành văn bản..."):
-                                text, error = process_audio_to_text(audio['bytes'])
-                                
-                                if text:
-                                    st.success("✅ Đã chuyển thành văn bản thành công!")
-                                    # Cập nhật session state
-                                    st.session_state.form_data['description'] = text
-                                    st.session_state.audio_processed['report'] = True
-                                    st.rerun()
-                                elif error:
-                                    st.error(f"❌ {error}")
+                        # Đánh dấu cần xử lý audio
+                        st.session_state.audio_to_process = audio
+                        
+                        # Tạo một nút ẩn để trigger xử lý
+                        if st.button("🔄 Xử lý ghi âm", key="process_audio_btn", help="Ẩn", type="secondary"):
+                            pass
                     
                     st.markdown('</div>', unsafe_allow_html=True)
+                
+                # Xử lý audio nếu có
+                if st.session_state.audio_to_process and not st.session_state.processing_audio:
+                    st.session_state.processing_audio = True
+                    
+                    with st.spinner("Đang chuyển giọng nói thành văn bản..."):
+                        text, error = process_audio_to_text(st.session_state.audio_to_process['bytes'])
+                        
+                        if text:
+                            st.success("✅ Đã chuyển thành văn bản thành công!")
+                            # Cập nhật session state
+                            st.session_state.form_data['description'] = text
+                            st.session_state.processed_text = text
+                            st.session_state.audio_to_process = None
+                            st.session_state.processing_audio = False
+                            st.rerun()
+                        elif error:
+                            st.error(f"❌ {error}")
+                            st.session_state.audio_to_process = None
+                            st.session_state.processing_audio = False
             else:
                 st.warning("⚠️ Tính năng ghi âm chưa khả dụng")
+            
+            # Hiển thị kết quả nếu đã xử lý
+            if st.session_state.processed_text:
+                st.info(f"**Kết quả ghi âm:** {st.session_state.processed_text}")
             
             st.markdown("</div>", unsafe_allow_html=True)
             
@@ -705,16 +712,16 @@ def main():
             
             if clear_button:
                 st.session_state.form_data = {'description': ''}
-                st.session_state.audio_processed['report'] = False
+                st.session_state.processed_text = None
+                st.session_state.audio_to_process = None
                 st.rerun()
             
             if submit_button:
-                if not description and not st.session_state.form_data['description']:
+                final_description = st.session_state.form_data['description']
+                
+                if not final_description:
                     st.error("⚠️ Vui lòng mô tả sự việc!")
                 else:
-                    # Sử dụng text đã nhập hoặc từ ghi âm
-                    final_description = st.session_state.form_data['description'] if st.session_state.form_data['description'] else description
-                    
                     with st.spinner("Đang xử lý phản ánh..."):
                         submit_time = get_vietnam_time()
                         
@@ -772,6 +779,9 @@ def main():
                         key="q_content_input"
                     )
                     
+                    # Lưu vào session state
+                    st.session_state.forum_form_data['content'] = q_content
+                    
                     st.markdown("**HOẶC**")
                     
                     # Ghi âm tự động cho diễn đàn
@@ -781,7 +791,7 @@ def main():
                         with st.container():
                             st.markdown('<div class="mic-recorder-container">', unsafe_allow_html=True)
                             
-                            # Tạo recorder
+                            # Tạo recorder với callback
                             audio = mic_recorder(
                                 start_prompt="🎤 BẮT ĐẦU GHI ÂM",
                                 stop_prompt="⏹️ DỪNG GHI ÂM",
@@ -791,23 +801,46 @@ def main():
                             
                             # Xử lý audio khi có dữ liệu
                             if audio is not None:
-                                # Chỉ xử lý nếu chưa xử lý lần nào
-                                if not st.session_state.audio_processed['forum']:
-                                    with st.spinner("Đang chuyển giọng nói thành văn bản..."):
-                                        text, error = process_audio_to_text(audio['bytes'])
-                                        
-                                        if text:
-                                            st.success("✅ Đã chuyển thành văn bản thành công!")
-                                            # Cập nhật session state
-                                            st.session_state.forum_form_data['content'] = text
-                                            st.session_state.audio_processed['forum'] = True
-                                            st.rerun()
-                                        elif error:
-                                            st.error(f"❌ {error}")
+                                # Đánh dấu cần xử lý audio
+                                st.session_state.audio_to_process = audio
+                                st.session_state.current_audio_type = 'forum'
+                                
+                                # Tạo một nút ẩn để trigger xử lý
+                                if st.button("🔄 Xử lý ghi âm", key="process_forum_audio_btn", help="Ẩn", type="secondary"):
+                                    pass
                             
                             st.markdown('</div>', unsafe_allow_html=True)
+                        
+                        # Xử lý audio cho diễn đàn
+                        if (st.session_state.audio_to_process and 
+                            st.session_state.current_audio_type == 'forum' and 
+                            not st.session_state.processing_audio):
+                            
+                            st.session_state.processing_audio = True
+                            
+                            with st.spinner("Đang chuyển giọng nói thành văn bản..."):
+                                text, error = process_audio_to_text(st.session_state.audio_to_process['bytes'])
+                                
+                                if text:
+                                    st.success("✅ Đã chuyển thành văn bản thành công!")
+                                    # Cập nhật session state
+                                    st.session_state.forum_form_data['content'] = text
+                                    st.session_state.processed_text = text
+                                    st.session_state.audio_to_process = None
+                                    st.session_state.current_audio_type = None
+                                    st.session_state.processing_audio = False
+                                    st.rerun()
+                                elif error:
+                                    st.error(f"❌ {error}")
+                                    st.session_state.audio_to_process = None
+                                    st.session_state.current_audio_type = None
+                                    st.session_state.processing_audio = False
                     else:
                         st.warning("⚠️ Tính năng ghi âm chưa khả dụng")
+                    
+                    # Hiển thị kết quả nếu đã xử lý
+                    if st.session_state.processed_text:
+                        st.info(f"**Kết quả ghi âm:** {st.session_state.processed_text}")
                     
                     # Nút hành động
                     col_submit, col_clear, col_cancel = st.columns(3)
@@ -823,11 +856,13 @@ def main():
                     
                     if clear_q:
                         st.session_state.forum_form_data = {'content': ''}
-                        st.session_state.audio_processed['forum'] = False
+                        st.session_state.processed_text = None
+                        st.session_state.audio_to_process = None
+                        st.session_state.current_audio_type = None
                         st.rerun()
                     
                     if submit_q:
-                        final_content = st.session_state.forum_form_data['content'] if st.session_state.forum_form_data['content'] else q_content
+                        final_content = st.session_state.forum_form_data['content']
                         
                         if not final_content:
                             st.error("Vui lòng nhập nội dung câu hỏi!")
@@ -838,7 +873,7 @@ def main():
                                 st.success(f"✅ Câu hỏi đã đăng lúc {format_vietnam_time(current_time)}! (ID: {anon_id})")
                                 st.session_state.show_new_question = False
                                 st.session_state.forum_form_data = {'content': ''}
-                                st.session_state.audio_processed['forum'] = False
+                                st.session_state.processed_text = None
                                 st.rerun()
                             else:
                                 st.error(f"❌ {error}")
@@ -1007,7 +1042,8 @@ def main():
         1. **Nhấn nút 🎤 BẮT ĐẦU GHI ÂM**
         2. **Nói** nội dung của bạn
         3. **Nhấn ⏹️ DỪNG GHI ÂM** khi xong
-        4. **Hệ thống tự động** chuyển thành chữ
+        4. **Nhấn nút 🔄 Xử lý ghi âm** (tự động hiển thị)
+        5. **Hệ thống tự động** chuyển thành chữ
         
         ### ⚠️ **LƯU Ý QUAN TRỌNG:**
         - **Không cần đăng ký** tài khoản
